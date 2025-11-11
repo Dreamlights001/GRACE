@@ -35,6 +35,23 @@ except ImportError as e:
 
 from config.config import Config
 
+# 配置HuggingFace镜像源 - 解决云计算平台连接问题
+HF_MIRRORS = [
+    "https://hf-mirror.com",  # 官方镜像
+    "https://huggingface.co",  # 原始地址
+    "https://hf-mirror.com",  # 备用镜像
+]
+
+# 设置环境变量以使用镜像源
+os.environ.setdefault("HF_ENDPOINT", HF_MIRRORS[0])
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+
+# 配置代理设置（如果需要）
+PROXY_CONFIG = {
+    "http_proxy": os.environ.get("HTTP_PROXY", ""),
+    "https_proxy": os.environ.get("HTTPS_PROXY", ""),
+}
+
 class DataPreparator:
     """数据下载和准备器 - 增强版网络处理"""
     
@@ -50,13 +67,18 @@ class DataPreparator:
         self.setup_logging()
         self.max_retries = 3
         self.retry_delay = 5
-        self.api = HfApi()
+        
+        # 初始化镜像源配置
+        self.hf_mirrors = HF_MIRRORS.copy()
+        self.current_mirror_index = 0
+        self.api = self._init_hf_api_with_mirrors()
         
         # 确保数据根目录存在
         self.data_root.mkdir(parents=True, exist_ok=True)
         
         print(f"数据根目录: {self.data_root}")
         print(f"配置数据集: {list(self.config.datasets.keys())}")
+        print(f"当前HuggingFace镜像源: {self.hf_mirrors[self.current_mirror_index]}")
     
     def setup_logging(self):
         """设置日志"""
@@ -77,13 +99,56 @@ class DataPreparator:
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"数据准备日志: {log_file}")
     
-    def _test_network_connectivity(self) -> bool:
-        """测试网络连接"""
+    def _init_hf_api_with_mirrors(self) -> HfApi:
+        """初始化带镜像源的HuggingFace API"""
         try:
-            response = requests.get("https://huggingface.co", timeout=10)
-            return response.status_code == 200
-        except:
+            # 设置当前镜像源
+            current_mirror = self.hf_mirrors[self.current_mirror_index]
+            os.environ["HF_ENDPOINT"] = current_mirror
+            
+            # 配置代理（如果存在）
+            if PROXY_CONFIG["http_proxy"] or PROXY_CONFIG["https_proxy"]:
+                self.logger.info(f"使用代理配置: {PROXY_CONFIG}")
+            
+            return HfApi()
+        except Exception as e:
+            self.logger.error(f"初始化HuggingFace API失败: {e}")
+            return HfApi()
+    
+    def _switch_to_next_mirror(self) -> bool:
+        """切换到下一个镜像源"""
+        if self.current_mirror_index < len(self.hf_mirrors) - 1:
+            self.current_mirror_index += 1
+            current_mirror = self.hf_mirrors[self.current_mirror_index]
+            os.environ["HF_ENDPOINT"] = current_mirror
+            self.api = self._init_hf_api_with_mirrors()
+            self.logger.info(f"切换到镜像源: {current_mirror}")
+            return True
+        else:
+            self.logger.error("所有镜像源都已尝试，无法连接")
             return False
+    
+    def _test_network_connectivity(self) -> bool:
+        """测试网络连接 - 支持镜像源切换"""
+        for mirror_index in range(len(self.hf_mirrors)):
+            current_mirror = self.hf_mirrors[mirror_index]
+            try:
+                self.logger.info(f"测试镜像源连接: {current_mirror}")
+                response = requests.get(current_mirror, timeout=10)
+                if response.status_code == 200:
+                    # 如果当前使用的不是这个可用的镜像源，切换到它
+                    if mirror_index != self.current_mirror_index:
+                        self.current_mirror_index = mirror_index
+                        os.environ["HF_ENDPOINT"] = current_mirror
+                        self.api = self._init_hf_api_with_mirrors()
+                        self.logger.info(f"切换到可用的镜像源: {current_mirror}")
+                    return True
+            except Exception as e:
+                self.logger.warning(f"镜像源 {current_mirror} 连接失败: {e}")
+                continue
+        
+        self.logger.error("所有镜像源连接测试失败")
+        return False
     
     def _get_available_alternatives(self, dataset_type: str) -> List[str]:
         """
@@ -116,18 +181,26 @@ class DataPreparator:
         return alternatives.get(dataset_type, [])
     
     def _load_dataset_with_retry(self, dataset_path: str, max_retries: int = None) -> Optional[Dict]:
-        """带重试机制的数据集加载"""
+        """带重试机制的数据集加载 - 支持镜像源切换"""
         if max_retries is None:
             max_retries = self.max_retries
         
         for attempt in range(max_retries):
             try:
                 self.logger.info(f"尝试加载数据集 {dataset_path} (第 {attempt + 1}/{max_retries} 次)")
+                self.logger.info(f"当前镜像源: {self.hf_mirrors[self.current_mirror_index]}")
+                
                 dataset = load_dataset(dataset_path)
                 self.logger.info(f"数据集 {dataset_path} 加载成功")
                 return dataset
             except Exception as e:
                 self.logger.warning(f"第 {attempt + 1} 次加载失败: {e}")
+                
+                # 如果还有镜像源可以切换，尝试切换镜像源
+                if self._switch_to_next_mirror():
+                    self.logger.info("切换镜像源后继续尝试")
+                    continue
+                
                 if attempt < max_retries - 1:
                     wait_time = self.retry_delay * (2 ** attempt)  # 指数退避
                     self.logger.info(f"等待 {wait_time} 秒后重试...")
@@ -139,7 +212,7 @@ class DataPreparator:
     
     def download_dataset(self, dataset_name: str) -> bool:
         """
-        下载指定数据集 - 增强版网络处理
+        下载指定数据集 - 增强版网络处理（支持镜像源切换）
         
         Args:
             dataset_name: 数据集名称 (bigvul, reveal, devign)
@@ -155,19 +228,24 @@ class DataPreparator:
         huggingface_url = dataset_info["huggingface_url"]
         
         self.logger.info(f"开始下载数据集: {dataset_name} ({huggingface_url})")
+        self.logger.info(f"当前镜像源: {self.hf_mirrors[self.current_mirror_index]}")
         
-        # 首先检查网络连接
+        # 首先检查网络连接（会自动测试并选择最佳镜像源）
         if not self._test_network_connectivity():
-            self.logger.error("网络连接失败，无法访问 HuggingFace Hub")
+            self.logger.error("网络连接失败，无法访问任何HuggingFace镜像源")
             self.logger.info("解决方案:")
             self.logger.info("1. 检查网络连接是否正常")
-            self.logger.info("2. 配置代理服务器")
+            self.logger.info("2. 配置代理服务器 (设置HTTP_PROXY/HTTPS_PROXY环境变量)")
             self.logger.info("3. 使用VPN连接")
-            self.logger.info("4. 稍后重试")
+            self.logger.info("4. 检查防火墙设置")
+            self.logger.info("5. 稍后重试")
             return False
         
+        # 重置镜像源索引，确保从最佳镜像源开始
+        self.current_mirror_index = 0
+        
         try:
-            # 从Hugging Face加载数据集
+            # 从Hugging Face加载数据集（支持镜像源切换和重试）
             if dataset_name == "bigvul":
                 dataset = self._load_bigvul_dataset()
             elif dataset_name == "reveal":
@@ -187,6 +265,7 @@ class DataPreparator:
             
             if success:
                 self.logger.info(f"数据集 {dataset_name} 下载完成")
+                self.logger.info(f"最终使用的镜像源: {self.hf_mirrors[self.current_mirror_index]}")
                 return True
             else:
                 self.logger.error(f"数据集 {dataset_name} 保存失败")
@@ -410,7 +489,7 @@ class DataPreparator:
     
     def check_network_and_provide_solutions(self) -> Dict:
         """
-        检查网络连接和HuggingFace Hub访问，并提供解决方案
+        检查网络连接和HuggingFace Hub访问，并提供解决方案（支持镜像源）
         
         Returns:
             Dict: 检查结果和解决方案
@@ -418,44 +497,52 @@ class DataPreparator:
         result = {
             "status": "",
             "hf_access": "",
+            "mirrors_status": {},
             "solutions": []
         }
         
-        # 测试基本网络连接
-        try:
-            response = requests.get("https://huggingface.co", timeout=10)
-            if response.status_code == 200:
-                result["status"] = "网络连接正常"
-            else:
-                result["status"] = f"网络连接异常 (HTTP {response.status_code})"
-                result["solutions"].extend([
-                    "检查网络连接是否正常",
-                    "尝试访问其他网站确认网络状态",
-                    "检查防火墙设置"
-                ])
-        except Exception as e:
-            result["status"] = f"网络连接失败: {str(e)}"
+        # 测试所有镜像源的连接状态
+        mirror_status = {}
+        for mirror in self.hf_mirrors:
+            try:
+                response = requests.get(mirror, timeout=10)
+                if response.status_code == 200:
+                    mirror_status[mirror] = "可访问"
+                else:
+                    mirror_status[mirror] = f"HTTP {response.status_code}"
+            except Exception as e:
+                mirror_status[mirror] = f"连接失败: {str(e)}"
+        
+        result["mirrors_status"] = mirror_status
+        
+        # 检查是否有可用的镜像源
+        available_mirrors = [m for m, status in mirror_status.items() if status == "可访问"]
+        
+        if available_mirrors:
+            result["status"] = f"网络连接正常，{len(available_mirrors)}个镜像源可用"
+            result["hf_access"] = f"HuggingFace Hub访问正常 (使用镜像源: {available_mirrors[0]})"
+        else:
+            result["status"] = "网络连接失败，所有镜像源均不可用"
+            result["hf_access"] = "HuggingFace Hub访问失败"
+            
             result["solutions"].extend([
                 "检查网络连接是否正常",
+                "配置代理服务器 (设置HTTP_PROXY/HTTPS_PROXY环境变量)",
+                "使用VPN连接",
+                "检查防火墙设置",
                 "检查DNS设置",
                 "尝试重启网络设备",
-                "联系网络管理员"
+                "联系网络管理员",
+                "稍后重试"
             ])
         
-        # 测试HuggingFace Hub访问
-        try:
-            # 尝试获取模型信息
-            self.api.list_datasets(limit=1)
-            result["hf_access"] = "HuggingFace Hub访问正常"
-        except Exception as e:
-            result["hf_access"] = f"HuggingFace Hub访问失败: {str(e)}"
-            result["solutions"].extend([
-                "检查是否可以访问 https://huggingface.co",
-                "配置代理服务器 (HTTP_PROXY/HTTPS_PROXY)",
-                "使用VPN连接",
-                "检查HuggingFace服务状态",
-                "设置HF_ENDPOINT环境变量使用镜像站点"
-            ])
+        # 添加镜像源配置建议
+        result["solutions"].extend([
+            "当前配置的镜像源:" + ", ".join(self.hf_mirrors),
+            "如需添加更多镜像源，可修改HF_MIRRORS列表",
+            "设置环境变量: export HF_ENDPOINT=https://hf-mirror.com",
+            "设置环境变量: export HF_HUB_ENABLE_HF_TRANSFER=1"
+        ])
         
         return result
     
