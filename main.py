@@ -1,318 +1,533 @@
+#!/usr/bin/env python3
 """
-GRACE漏洞检测主应用程序
-使用本地预训练模型进行代码漏洞检测
+GRACE主程序入口
+支持本地预训练模型推理和漏洞检测
+
+使用方法:
+    python main.py --download-model  # 下载预训练模型
+    python main.py --mode eval --dataset bigvul  # 评估BigVul数据集
+    python main.py --mode interactive  # 交互式检测
+    python main.py --download-data  # 下载数据集
 """
 
-import argparse
-import logging
+import os
 import sys
 import json
+import argparse
+import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-import pandas as pd
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-# 导入新模块化的组件
-from config.config import config
+# 添加项目路径
+sys.path.append(str(Path(__file__).parent))
+
+# 导入项目模块
+from config.config import Config
 from models import LocalVulnerabilityDetector, CodeRetriever
-from data import DataProcessor, DatasetInfo
-from utils.model_downloader import ensure_codebert_available, download_default_model
+from data import DataProcessor
+from utils import setup_logging, ensure_directories, check_system_requirements, save_json_safe, estimate_model_size
+from utils.model_downloader import download_default_model, check_model_exists
 from utils.prompt_templates import create_vulnerability_prompt
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(config.log_dir / f'grace_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
-    ]
-)
-logger = logging.getLogger(__name__)
-
 class GraceApplication:
-    """GRACE漏洞检测应用程序主类"""
+    """GRACE应用程序主类"""
     
-    def __init__(self):
-        self.detector = None
-        self.retriever = None
-        self.data_processor = DataProcessor()
-        self.dataset_info = DatasetInfo()
+    def __init__(self, data_root: str = None):
+        """
+        初始化应用程序
         
-    def initialize(self, hf_token: Optional[str] = None) -> bool:
-        """初始化应用程序"""
+        Args:
+            data_root: 数据集存储根目录，如果为None则使用配置文件默认值
+        """
+        # 初始化配置
+        self.config = Config(data_root=data_root) if data_root else Config()
+        
+        # 设置日志和目录
+        setup_logging(self.config.log_level, self.config.log_format)
+        ensure_directories()
+        
+        # 初始化组件
+        self.detector: Optional[LocalVulnerabilityDetector] = None
+        self.retriever: Optional[CodeRetriever] = None
+        self.data_processor: Optional[DataProcessor] = None
+        
+        # 评估结果存储
+        self.evaluation_results: Dict[str, Any] = {}
+        
+        print("🚀 GRACE - 基于图结构和上下文学习的漏洞检测系统")
+        print(f"📁 项目根目录: {self.config.project_root}")
+        print(f"📊 数据目录: {self.config.data_dir}")
+        print(f"🤖 模型目录: {self.config.models_dir}")
+        print(f"💻 设备: {self.config.device}")
+    
+    def initialize_model(self, model_name: str = None) -> bool:
+        """
+        初始化模型
+        
+        Args:
+            model_name: 模型名称，如果为None则使用配置默认值
+            
+        Returns:
+            bool: 初始化是否成功
+        """
         try:
-            logger.info("正在初始化GRACE应用程序...")
+            if model_name is None:
+                model_name = self.config.model_name
             
-            # 确保模型目录存在
-            config.model_dir.mkdir(exist_ok=True)
-            config.log_dir.mkdir(exist_ok=True)
+            print(f"🔄 初始化模型: {model_name}")
             
-            # 下载并加载默认模型
-            logger.info("正在准备预训练模型...")
-            if not ensure_codebert_available():
-                logger.warning("模型下载失败，尝试重新下载...")
-                if not download_default_model():
-                    logger.error("模型准备失败")
-                    return False
+            # 检查模型是否存在
+            if not check_model_exists(model_name):
+                print(f"❌ 模型 {model_name} 不存在")
+                print("请运行: python main.py --download-model")
+                return False
             
             # 初始化检测器
-            logger.info("正在初始化漏洞检测器...")
             self.detector = LocalVulnerabilityDetector(
-                model_name="microsoft/codebert-base",
-                hf_token=hf_token
+                model_name=model_name,
+                max_length=self.config.max_length,
+                device=self.config.device
             )
             
-            # 初始化代码检索器
-            logger.info("正在初始化代码检索器...")
-            self.retriever = CodeRetriever(
-                model_name="microsoft/codebert-base"
-            )
-            
-            logger.info("GRACE应用程序初始化完成")
+            print("✅ 模型初始化成功")
             return True
             
         except Exception as e:
-            logger.error(f"初始化失败: {e}")
+            print(f"❌ 模型初始化失败: {e}")
+            return False
+    
+    def initialize_components(self, model_name: str = None) -> bool:
+        """
+        初始化所有组件
+        
+        Args:
+            model_name: 模型名称
+            
+        Returns:
+            bool: 初始化是否成功
+        """
+        try:
+            # 初始化模型
+            if not self.initialize_model(model_name):
+                return False
+            
+            # 初始化数据处理器
+            print("🔄 初始化数据处理器...")
+            self.data_processor = DataProcessor(self.config)
+            print("✅ 数据处理器初始化成功")
+            
+            # 初始化代码检索器
+            print("🔄 初始化代码检索器...")
+            self.retriever = CodeRetriever(
+                model=self.detector.tokenizer,
+                embedding_model=self.config.embedding_model,
+                device=self.config.device
+            )
+            print("✅ 代码检索器初始化成功")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ 组件初始化失败: {e}")
+            return False
+    
+    def download_model(self, model_name: str = None) -> bool:
+        """
+        下载预训练模型
+        
+        Args:
+            model_name: 模型名称
+            
+        Returns:
+            bool: 下载是否成功
+        """
+        try:
+            if model_name is None:
+                model_name = self.config.model_name
+            
+            print(f"🔄 开始下载模型: {model_name}")
+            
+            # 下载模型
+            success = download_default_model(model_name)
+            
+            if success:
+                print("✅ 模型下载成功")
+                return True
+            else:
+                print("❌ 模型下载失败")
+                return False
+                
+        except Exception as e:
+            print(f"❌ 下载模型时发生错误: {e}")
             return False
     
     def run_evaluation(self, dataset_name: str, split: str = "test", 
-                      k_examples: int = 3) -> Dict[str, Any]:
-        """运行评估"""
+                      output_file: str = None) -> bool:
+        """
+        运行数据集评估
+        
+        Args:
+            dataset_name: 数据集名称
+            split: 数据集分割
+            output_file: 输出文件名
+            
+        Returns:
+            bool: 评估是否成功
+        """
         try:
-            logger.info(f"开始评估数据集: {dataset_name}")
+            if self.detector is None:
+                print("❌ 模型未初始化，请先运行 --download-model")
+                return False
+            
+            print(f"🔄 开始评估数据集: {dataset_name} ({split})")
             
             # 加载数据
-            data = self.data_processor.load_dataset(dataset_name, split)
-            if not data:
-                logger.error(f"无法加载数据: {dataset_name}")
-                return {}
+            if not self.data_processor.load_dataset(dataset_name, split):
+                print(f"❌ 加载数据集 {dataset_name} 失败")
+                return False
             
-            # 准备训练数据用于构建索引
-            logger.info("正在构建检索索引...")
-            train_codes, train_asts = self.data_processor.prepare_training_data(dataset_name)
+            # 获取数据
+            data_items = self.data_processor.get_data_items()
+            if not data_items:
+                print(f"❌ 数据集 {dataset_name} 为空")
+                return False
             
-            if train_codes and train_asts:
-                self.retriever.build_index(train_codes, train_asts)
-                logger.info("检索索引构建完成")
+            print(f"📊 数据集大小: {len(data_items)} 条样本")
             
-            # 处理数据
-            results = []
-            total = len(data)
+            # 评估设置
+            total_samples = len(data_items)
+            batch_size = self.config.eval_batch_size
+            true_labels = []
+            predictions = []
+            confidences = []
             
-            for i, item in enumerate(data):
+            # 评估模型
+            for i, item in enumerate(data_items):
                 if i % 100 == 0:
-                    logger.info(f"处理进度: {i}/{total}")
+                    print(f"📈 进度: {i}/{total_samples} ({i/total_samples*100:.1f}%)")
                 
-                try:
-                    # 准备输入
-                    code = item.get('func', '')
-                    target = item.get('target', 0)
-                    node_info = item.get('node', '')
-                    edge_info = item.get('edge', '')
-                    
-                    # 获取相关示例
-                    examples = []
-                    if self.retriever and len(train_codes) > 0:
-                        similar_codes, similar_asts = self.retriever.retrieve_similar(code, k=k_examples)
-                        for j, (similar_code, similar_ast) in enumerate(zip(similar_codes, similar_asts)):
-                            examples.append({
-                                'code': similar_code,
-                                'ast': similar_ast,
-                                'vulnerability': '相关代码示例' if j < k_examples else ''
-                            })
-                    
-                    # 创建提示
-                    prompt = create_vulnerability_prompt(
-                        code=code,
-                        context="",
-                        node_info=node_info,
-                        edge_info=edge_info
-                    )
-                    
-                    # 预测
-                    prediction = self.detector.predict_vulnerability(prompt)
-                    
-                    result = {
-                        'index': i,
-                        'code': code[:200] + '...' if len(code) > 200 else code,
-                        'target': target,
-                        'prediction': prediction,
-                        'node_info': node_info[:100] + '...' if len(node_info) > 100 else node_info,
-                        'edge_info': edge_info[:100] + '...' if len(edge_info) > 100 else edge_info
-                    }
-                    results.append(result)
-                    
-                except Exception as e:
-                    logger.warning(f"处理样本 {i} 时出错: {e}")
+                # 获取代码
+                code = item.get('code', '')
+                if not code:
                     continue
-            
-            # 计算评估指标
-            metrics = self._calculate_metrics(results)
-            
-            # 保存结果
-            self._save_results(results, metrics, dataset_name, split)
-            
-            logger.info(f"评估完成 - {dataset_name}: {metrics}")
-            return metrics
-            
-        except Exception as e:
-            logger.error(f"评估失败: {e}")
-            return {}
-    
-    def _calculate_metrics(self, results: List[Dict[str, Any]]) -> Dict[str, float]:
-        """计算评估指标"""
-        try:
-            if not results:
-                return {}
-            
-            y_true = []
-            y_pred = []
-            
-            for result in results:
-                target = result.get('target', 0)
-                prediction = result.get('prediction', {})
                 
-                # 假设prediction包含has_vulnerability布尔值
-                if isinstance(prediction, dict):
-                    has_vuln = prediction.get('has_vulnerability', False)
-                    pred_label = 1 if has_vuln else 0
-                else:
-                    pred_label = 0
+                # 创建提示
+                prompt = create_vulnerability_prompt(code=code)
                 
-                y_true.append(target)
-                y_pred.append(pred_label)
+                # 预测
+                result = self.detector.predict_vulnerability(prompt)
+                
+                # 记录结果
+                true_label = item.get('label', 0)
+                pred_label = 1 if result.get('has_vulnerability', False) else 0
+                confidence = result.get('confidence', 0.0)
+                
+                true_labels.append(true_label)
+                predictions.append(pred_label)
+                confidences.append(confidence)
             
             # 计算指标
             from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
             
-            accuracy = accuracy_score(y_true, y_pred)
-            precision = precision_score(y_true, y_pred, average='binary', zero_division=0)
-            recall = recall_score(y_true, y_pred, average='binary', zero_division=0)
-            f1 = f1_score(y_true, y_pred, average='binary', zero_division=0)
+            accuracy = accuracy_score(true_labels, predictions)
+            precision = precision_score(true_labels, predictions, average='binary', zero_division=0)
+            recall = recall_score(true_labels, predictions, average='binary', zero_division=0)
+            f1 = f1_score(true_labels, predictions, average='binary', zero_division=0)
             
-            return {
-                'accuracy': round(accuracy, 4),
-                'precision': round(precision, 4),
-                'recall': round(recall, 4),
-                'f1': round(f1, 4),
-                'total_samples': len(results)
+            # 保存结果
+            results = {
+                'dataset': dataset_name,
+                'split': split,
+                'total_samples': total_samples,
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'f1_score': f1,
+                'timestamp': datetime.now().isoformat(),
+                'model_name': self.config.model_name,
+                'predictions': predictions,
+                'true_labels': true_labels,
+                'confidences': confidences
             }
             
+            # 打印结果
+            print(f"\n📊 评估结果 - {dataset_name} ({split}):")
+            print(f"   Accuracy:  {accuracy:.4f}")
+            print(f"   Precision: {precision:.4f}")
+            print(f"   Recall:    {recall:.4f}")
+            print(f"   F1-Score:  {f1:.4f}")
+            
+            # 保存到文件
+            if output_file is None:
+                output_file = f"{dataset_name}metrics{self.config.model_name.split('/')[-1]}.log"
+            
+            output_path = self.config.get_output_path(output_file)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(f"Dataset: {dataset_name} ({split})\n")
+                f.write(f"Model: {self.config.model_name}\n")
+                f.write(f"Total Samples: {total_samples}\n")
+                f.write(f"Accuracy: {accuracy:.4f}\n")
+                f.write(f"Precision: {precision:.4f}\n")
+                f.write(f"Recall: {recall:.4f}\n")
+                f.write(f"F1-Score: {f1:.4f}\n")
+                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+            
+            print(f"💾 结果已保存: {output_path}")
+            
+            # 存储结果
+            self.evaluation_results[dataset_name] = results
+            
+            return True
+            
         except Exception as e:
-            logger.error(f"计算指标失败: {e}")
-            return {}
+            print(f"❌ 评估失败: {e}")
+            return False
     
-    def _save_results(self, results: List[Dict], metrics: Dict[str, Any], 
-                     dataset_name: str, split: str):
-        """保存结果"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # 保存详细结果
-            results_path = config.output_dir / f"{dataset_name}_{split}_results_{timestamp}.json"
-            with open(results_path, 'w', encoding='utf-8') as f:
-                json.dump(results, f, ensure_ascii=False, indent=2)
-            
-            # 保存评估指标
-            metrics_path = config.output_dir / f"{dataset_name}_{split}_metrics_{timestamp}.json"
-            with open(metrics_path, 'w', encoding='utf-8') as f:
-                json.dump(metrics, f, ensure_ascii=False, indent=2)
-            
-            # 保存CSV格式的指标
-            csv_path = config.output_dir / f"{dataset_name}_{split}_metrics_{timestamp}.csv"
-            pd.DataFrame([metrics]).to_csv(csv_path, index=False)
-            
-            logger.info(f"结果已保存到: {config.output_dir}")
-            
-        except Exception as e:
-            logger.error(f"保存结果失败: {e}")
-    
-    def run_interactive(self):
-        """运行交互模式"""
-        print("GRACE漏洞检测系统 - 交互模式")
-        print("输入 'quit' 退出")
+    def run_interactive_mode(self):
+        """运行交互式检测模式"""
+        print("🎯 交互式漏洞检测模式")
+        print("输入代码片段，系统将实时分析并提供漏洞检测结果")
+        print("输入 'quit' 或 'exit' 退出\n")
+        
+        if self.detector is None:
+            print("❌ 模型未初始化，请先运行 --download-model")
+            return
         
         while True:
             try:
-                code = input("\\n请输入要检测的代码: ").strip()
-                if code.lower() == 'quit':
+                # 获取用户输入
+                print("请输入要检测的代码 (输入空行结束):")
+                code_lines = []
+                while True:
+                    line = input()
+                    if line.strip() == "":
+                        break
+                    code_lines.append(line)
+                
+                # 检查退出命令
+                code = "\n".join(code_lines)
+                if code.lower() in ['quit', 'exit', 'q']:
+                    print("👋 再见！")
                     break
                 
-                if not code:
+                if not code.strip():
+                    print("⚠️ 代码为空，请重新输入")
                     continue
                 
-                # 检测漏洞
-                prompt = create_vulnerability_prompt(code)
-                prediction = self.detector.predict_vulnerability(prompt)
+                # 创建提示
+                prompt = create_vulnerability_prompt(code=code)
                 
-                print(f"\\n检测结果:")
-                print(f"漏洞判断: {'是' if prediction.get('has_vulnerability', False) else '否'}")
-                print(f"置信度: {prediction.get('confidence', 0.0)}")
-                print(f"漏洞类型: {prediction.get('vulnerability_type', '无')}")
-                print(f"解释: {prediction.get('explanation', '无')}")
+                # 预测
+                print("🔄 分析中...")
+                result = self.detector.predict_vulnerability(prompt)
+                
+                # 显示结果
+                print("\n📊 检测结果:")
+                print(f"   漏洞判断: {'是' if result.get('has_vulnerability', False) else '否'}")
+                print(f"   置信度: {result.get('confidence', 0.0):.2f}")
+                print(f"   漏洞类型: {result.get('vulnerability_type', '未知')}")
+                print(f"   分析建议: {result.get('suggestion', '无')}")
+                
+                print("-" * 50)
                 
             except KeyboardInterrupt:
+                print("\n👋 程序被用户中断，再见！")
                 break
             except Exception as e:
-                logger.error(f"交互模式错误: {e}")
+                print(f"❌ 处理出错: {e}")
+                continue
+    
+    def run_data_preparation(self, dataset: str = None, data_root: str = None) -> bool:
+        """
+        运行数据准备流程
         
-        print("感谢使用GRACE!")
+        Args:
+            dataset: 要准备的数据集，None表示准备所有数据集
+            data_root: 数据根目录
+            
+        Returns:
+            bool: 数据准备是否成功
+        """
+        try:
+            print("🔄 开始数据准备流程...")
+            
+            # 导入数据准备器
+            from prepare_data import DataPreparator
+            
+            # 创建数据准备器
+            preparator = DataPreparator(data_root=data_root or str(self.config.data_root))
+            
+            # 准备数据
+            if dataset:
+                preparator.run_full_preparation([dataset])
+            else:
+                preparator.run_full_preparation()
+            
+            print("✅ 数据准备完成")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 数据准备失败: {e}")
+            return False
+    
+    def check_system_status(self):
+        """检查系统状态"""
+        print("🔍 系统状态检查")
+        print("=" * 50)
+        
+        # 检查目录
+        print(f"📁 项目目录: {self.config.project_root}")
+        print(f"📊 数据目录: {self.config.data_dir}")
+        print(f"🤖 模型目录: {self.config.models_dir}")
+        print(f"📄 输出目录: {self.config.output_dir}")
+        
+        # 检查模型
+        model_exists = check_model_exists(self.config.model_name)
+        model_status = "✅ 已下载" if model_exists else "❌ 未下载"
+        print(f"🤖 预训练模型 {self.config.model_name}: {model_status}")
+        
+        # 检查系统要求
+        requirements = check_system_requirements()
+        print(f"💻 系统要求: {requirements}")
+        
+        # 检查数据状态
+        try:
+            from prepare_data import DataPreparator
+            preparator = DataPreparator()
+            preparator.print_status()
+        except Exception as e:
+            print(f"❌ 数据状态检查失败: {e}")
+        
+        print("=" * 50)
+    
+    def run_all_evaluations(self, datasets: List[str] = None):
+        """
+        运行所有数据集的评估
+        
+        Args:
+            datasets: 要评估的数据集列表，None表示评估所有数据集
+        """
+        if datasets is None:
+            datasets = ["bigvul", "reveal", "devign"]
+        
+        print(f"🔄 开始评估所有数据集: {datasets}")
+        
+        success_count = 0
+        for dataset_name in datasets:
+            print(f"\n{'=' * 20} 评估 {dataset_name} {'=' * 20}")
+            
+            if self.run_evaluation(dataset_name, split="test"):
+                success_count += 1
+                print(f"✅ {dataset_name} 评估成功")
+            else:
+                print(f"❌ {dataset_name} 评估失败")
+        
+        print(f"\n📊 评估总结: {success_count}/{len(datasets)} 成功")
+        
+        # 保存所有结果
+        if self.evaluation_results:
+            all_results_path = self.config.get_output_path("all_evaluation_results.json")
+            with open(all_results_path, 'w', encoding='utf-8') as f:
+                json.dump(self.evaluation_results, f, indent=2, ensure_ascii=False)
+            print(f"💾 所有结果已保存: {all_results_path}")
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description="GRACE漏洞检测系统")
-    parser.add_argument("--mode", choices=["eval", "interactive", "download"], 
-                       default="eval", help="运行模式")
-    parser.add_argument("--dataset", choices=["bigvul", "reveal", "devign"], 
-                       default="bigvul", help="数据集")
-    parser.add_argument("--split", choices=["train", "test"], 
-                       default="test", help="数据分割")
-    parser.add_argument("--k-examples", type=int, default=3, 
-                       help="检索示例数量")
-    parser.add_argument("--hf-token", type=str, 
-                       help="Hugging Face API Token（可选）")
-    parser.add_argument("--download-model", action="store_true", 
-                       help="仅下载模型")
+    parser = argparse.ArgumentParser(description="GRACE - 基于图结构和上下文学习的漏洞检测系统")
+    
+    # 基础参数
+    parser.add_argument("--data-root", type=str, help="数据存储根目录")
+    parser.add_argument("--model-name", type=str, help="使用的预训练模型名称")
+    parser.add_argument("--device", type=str, choices=["cpu", "cuda"], help="计算设备")
+    
+    # 操作模式
+    parser.add_argument("--download-model", action="store_true", help="下载预训练模型")
+    parser.add_argument("--download-data", action="store_true", help="下载数据集")
+    parser.add_argument("--check-status", action="store_true", help="检查系统状态")
+    parser.add_argument("--eval-all", action="store_true", help="评估所有数据集")
+    
+    # 评估模式
+    parser.add_argument("--mode", type=str, choices=["eval", "interactive"], help="运行模式")
+    parser.add_argument("--dataset", type=str, choices=["bigvul", "reveal", "devign"], 
+                       help="要评估的数据集")
+    parser.add_argument("--split", type=str, default="test", choices=["train", "test", "val"],
+                       help="数据集分割")
+    parser.add_argument("--output", type=str, help="输出文件名")
+    
+    # 数据准备
+    parser.add_argument("--dataset-for-data", type=str, choices=["bigvul", "reveal", "devign"],
+                       help="要准备的数据集")
     
     args = parser.parse_args()
     
-    # 创建应用
-    app = GraceApplication()
+    # 创建应用程序
+    app = GraceApplication(data_root=args.data_root)
+    
+    # 设置模型和设备
+    if args.model_name:
+        app.config.model_name = args.model_name
+    if args.device:
+        app.config.device = args.device
     
     try:
-        # 初始化
-        if not app.initialize(args.hf_token):
-            logger.error("应用程序初始化失败")
-            sys.exit(1)
-        
-        # 运行模式
-        if args.download_model:
-            logger.info("模型下载完成")
-            return
-        
-        if args.mode == "eval":
-            # 评估模式
-            metrics = app.run_evaluation(
-                dataset_name=args.dataset,
-                split=args.split,
-                k_examples=args.k_examples
-            )
+        # 处理各种操作
+        if args.check_status:
+            # 检查系统状态
+            app.check_system_status()
             
-            if metrics:
-                print(f"\\n评估结果 - {args.dataset}:")
-                for key, value in metrics.items():
-                    print(f"{key}: {value}")
-            else:
-                logger.error("评估失败")
-        
+        elif args.download_model:
+            # 下载模型
+            app.download_model(args.model_name)
+            
+        elif args.download_data:
+            # 下载数据
+            app.run_data_preparation(args.dataset_for_data, args.data_root)
+            
+        elif args.mode == "eval":
+            # 评估模式
+            if not args.dataset:
+                print("❌ 评估模式需要指定 --dataset 参数")
+                return
+            
+            if not app.initialize_components(args.model_name):
+                return
+            
+            app.run_evaluation(args.dataset, args.split, args.output)
+            
         elif args.mode == "interactive":
-            # 交互模式
-            app.run_interactive()
-        
+            # 交互式模式
+            if not app.initialize_components(args.model_name):
+                return
+            
+            app.run_interactive_mode()
+            
+        elif args.eval_all:
+            # 评估所有数据集
+            if not app.initialize_components(args.model_name):
+                return
+            
+            app.run_all_evaluations()
+            
+        else:
+            # 默认行为：显示帮助信息
+            print("🚀 GRACE 漏洞检测系统")
+            print("请指定操作模式：")
+            print("  --download-model    下载预训练模型")
+            print("  --download-data     下载数据集") 
+            print("  --mode eval --dataset bigvul  评估数据集")
+            print("  --mode interactive  交互式检测")
+            print("  --eval-all          评估所有数据集")
+            print("  --check-status      检查系统状态")
+            print("\n示例:")
+            print("  python main.py --download-model")
+            print("  python main.py --mode eval --dataset bigvul")
+            print("  python main.py --mode interactive")
+            
     except Exception as e:
-        logger.error(f"程序运行错误: {e}")
-        sys.exit(1)
+        print(f"❌ 程序运行错误: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()

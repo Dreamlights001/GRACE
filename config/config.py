@@ -11,10 +11,17 @@ from typing import Optional, Dict, Any
 class Config:
     """项目配置类"""
     
-    def __init__(self):
+    def __init__(self, data_root: str = None):
         # 基础路径配置
         self.project_root = Path(__file__).parent.parent.absolute()
-        self.data_dir = self.project_root / "data"
+        
+        # 数据根目录配置 - 默认使用项目内data目录，可自定义
+        if data_root:
+            self.data_root = Path(data_root)
+        else:
+            self.data_root = self.project_root / "data"
+        
+        self.data_dir = self.data_root  # 数据集存储目录
         self.models_dir = self.project_root / "models"
         self.output_dir = self.project_root / "outputs"
         self.logs_dir = self.project_root / "logs"
@@ -52,11 +59,16 @@ class Config:
         self.log_level = "INFO"
         self.log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         
-        # 数据集配置
+        # 数据集配置 - 使用Hugging Face数据集
         self.datasets = {
             "bigvul": {
                 "name": "BigVul",
-                "download_url": "https://drive.google.com/file/d/1-0VhnHBp9IGh90s2wCNjeCMuy70HPl8X/view?usp=sharing",
+                "huggingface_url": "https://huggingface.co/datasets/bstee615/bigvul",
+                "local_files": {
+                    "train": "bigvul_train.json",
+                    "test": "bigvul_test.json",
+                    "val": "bigvul_val.json"
+                },
                 "processed_files": {
                     "train": "bigvul_train_processed.json",
                     "test": "bigvul_test_processed.json"
@@ -64,7 +76,12 @@ class Config:
             },
             "reveal": {
                 "name": "Reveal", 
-                "download_url": "https://drive.google.com/drive/folders/1KuIYgFcvWUXheDhT--cBALsfy1I4utOyF",
+                "huggingface_url": "https://huggingface.co/datasets/claudios/ReVeal",
+                "local_files": {
+                    "train": "reveal_train.json",
+                    "test": "reveal_test.json", 
+                    "val": "reveal_val.json"
+                },
                 "processed_files": {
                     "train": "reveal_train_processed.json",
                     "test": "reveal_test_processed.json"
@@ -72,7 +89,12 @@ class Config:
             },
             "devign": {
                 "name": "Devign",
-                "download_url": "https://drive.google.com/file/d/1x6hoF7G-tSYxg8AFybggypLZgMGDNHfF",
+                "huggingface_url": "https://huggingface.co/datasets/DetectVul/devign",
+                "local_files": {
+                    "train": "devign_train.json",
+                    "test": "devign_test.json",
+                    "val": "devign_val.json"
+                },
                 "processed_files": {
                     "train": "devign_train_processed.json", 
                     "test": "devign_test_processed.json"
@@ -112,6 +134,15 @@ class Config:
             raise ValueError(f"Unknown dataset: {dataset_name}")
         
         dataset_config = self.datasets[dataset_name]
+        filename = dataset_config["local_files"][split]
+        return self.data_dir / filename
+    
+    def get_processed_dataset_path(self, dataset_name: str, split: str = "test") -> Path:
+        """获取处理后的数据集文件路径"""
+        if dataset_name not in self.datasets:
+            raise ValueError(f"Unknown dataset: {dataset_name}")
+        
+        dataset_config = self.datasets[dataset_name]
         filename = dataset_config["processed_files"][split]
         return self.data_dir / filename
     
@@ -135,17 +166,17 @@ class Config:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False, default=str)
     
     @classmethod
-    def load_config(cls, filename: str = "config.json"):
+    def load_config(cls, filename: str = "config.json", data_root: str = None):
         """从文件加载配置"""
         config_path = Path(filename)
         if not config_path.exists():
-            return cls()
+            return cls(data_root)
         
         import json
         with open(config_path, 'r', encoding='utf-8') as f:
             config_data = json.load(f)
         
-        config = cls()
+        config = cls(data_root)
         for key, value in config_data.items():
             if hasattr(config, key):
                 setattr(config, key, value)
