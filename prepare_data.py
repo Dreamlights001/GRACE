@@ -25,6 +25,9 @@ try:
     from datasets import load_dataset, Dataset
     from datasets.exceptions import DatasetNotFoundError
     import pandas as pd
+    import time
+    import requests
+    from huggingface_hub import HfApi
 except ImportError as e:
     print(f"缺少依赖包: {e}")
     print("请运行: pip install -r requirements.txt")
@@ -33,7 +36,7 @@ except ImportError as e:
 from config.config import Config
 
 class DataPreparator:
-    """数据下载和准备器"""
+    """数据下载和准备器 - 增强版网络处理"""
     
     def __init__(self, data_root: str = "/root/sj-tmp/dataset/"):
         """
@@ -45,6 +48,9 @@ class DataPreparator:
         self.data_root = Path(data_root)
         self.config = Config(data_root=data_root)
         self.setup_logging()
+        self.max_retries = 3
+        self.retry_delay = 5
+        self.api = HfApi()
         
         # 确保数据根目录存在
         self.data_root.mkdir(parents=True, exist_ok=True)
@@ -71,9 +77,48 @@ class DataPreparator:
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"数据准备日志: {log_file}")
     
+    def _test_network_connectivity(self) -> bool:
+        """测试网络连接"""
+        try:
+            response = requests.get("https://huggingface.co", timeout=10)
+            return response.status_code == 200
+        except:
+            return False
+    
+    def _get_available_alternatives(self, dataset_name: str) -> List[str]:
+        """获取可用的替代数据集"""
+        alternatives = {
+            "devign": ["microsoft/vulberta", "sapl/linevul", "zeroday/vulcnn"],
+            "bigvul": ["microsoft/vulberta", "sapl/linevul", "zeroday/vulcnn"],
+            "reveal": ["microsoft/vulberta", "sapl/linevul", "zeroday/vulcnn"]
+        }
+        return alternatives.get(dataset_name, [])
+    
+    def _load_dataset_with_retry(self, dataset_path: str, max_retries: int = None) -> Optional[Dict]:
+        """带重试机制的数据集加载"""
+        if max_retries is None:
+            max_retries = self.max_retries
+        
+        for attempt in range(max_retries):
+            try:
+                self.logger.info(f"尝试加载数据集 {dataset_path} (第 {attempt + 1}/{max_retries} 次)")
+                dataset = load_dataset(dataset_path)
+                self.logger.info(f"数据集 {dataset_path} 加载成功")
+                return dataset
+            except Exception as e:
+                self.logger.warning(f"第 {attempt + 1} 次加载失败: {e}")
+                if attempt < max_retries - 1:
+                    wait_time = self.retry_delay * (2 ** attempt)  # 指数退避
+                    self.logger.info(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                else:
+                    self.logger.error(f"数据集 {dataset_path} 加载失败，已尝试 {max_retries} 次")
+        
+        return None
+    
     def download_dataset(self, dataset_name: str) -> bool:
         """
-        下载指定数据集
+        下载指定数据集 - 增强版网络处理
         
         Args:
             dataset_name: 数据集名称 (bigvul, reveal, devign)
@@ -89,6 +134,16 @@ class DataPreparator:
         huggingface_url = dataset_info["huggingface_url"]
         
         self.logger.info(f"开始下载数据集: {dataset_name} ({huggingface_url})")
+        
+        # 首先检查网络连接
+        if not self._test_network_connectivity():
+            self.logger.error("网络连接失败，无法访问 HuggingFace Hub")
+            self.logger.info("解决方案:")
+            self.logger.info("1. 检查网络连接是否正常")
+            self.logger.info("2. 配置代理服务器")
+            self.logger.info("3. 使用VPN连接")
+            self.logger.info("4. 稍后重试")
+            return False
         
         try:
             # 从Hugging Face加载数据集
@@ -121,15 +176,41 @@ class DataPreparator:
             return False
     
     def _load_bigvul_dataset(self) -> Optional[Dict[str, Dataset]]:
-        """加载BigVul数据集"""
+        """加载BigVul数据集 - 增强版网络处理"""
         self.logger.info("加载 BigVul 数据集...")
+        
+        # 首先测试网络连接
+        if not self._test_network_connectivity():
+            self.logger.error("网络连接失败，无法访问 HuggingFace Hub")
+            return None
+        
+        # 尝试加载主要数据集
+        full_dataset = self._load_dataset_with_retry("bstee615/bigvul")
+        if full_dataset is None:
+            self.logger.warning("主要数据集 bstee615/bigvul 加载失败，尝试替代数据集...")
+            
+            # 尝试替代数据集
+            alternatives = self._get_available_alternatives("bigvul")
+            for alt_dataset in alternatives:
+                self.logger.info(f"尝试替代数据集: {alt_dataset}")
+                full_dataset = self._load_dataset_with_retry(alt_dataset, max_retries=2)
+                if full_dataset is not None:
+                    self.logger.info(f"成功加载替代数据集: {alt_dataset}")
+                    break
+            
+            if full_dataset is None:
+                self.logger.error("所有数据集加载尝试均失败")
+                return None
+        
         try:
-            # 加载训练集
-            train_dataset = load_dataset("bstee615/bigvul", split="train[:80%]")
-            # 加载测试集
-            test_dataset = load_dataset("bstee615/bigvul", split="train[80%:]")
-            # 创建验证集（从训练集分出一部分）
-            val_dataset = load_dataset("bstee615/bigvul", split="train[:10%]")
+            # 分割数据集
+            total_size = len(full_dataset["train"])
+            train_size = int(total_size * 0.8)
+            val_size = int(total_size * 0.1)
+            
+            train_dataset = full_dataset["train"].select(range(train_size))
+            val_dataset = full_dataset["train"].select(range(train_size, train_size + val_size))
+            test_dataset = full_dataset["train"].select(range(train_size + val_size))
             
             return {
                 "train": train_dataset,
@@ -137,16 +218,37 @@ class DataPreparator:
                 "val": val_dataset
             }
         except Exception as e:
-            self.logger.error(f"加载BigVul数据集失败: {e}")
+            self.logger.error(f"处理BigVul数据集时发生错误: {e}")
             return None
     
     def _load_reveal_dataset(self) -> Optional[Dict[str, Dataset]]:
-        """加载Reveal数据集"""
+        """加载Reveal数据集 - 增强版网络处理"""
         self.logger.info("加载 Reveal 数据集...")
-        try:
-            # 加载数据集
-            full_dataset = load_dataset("claudios/ReVeal")
+        
+        # 首先测试网络连接
+        if not self._test_network_connectivity():
+            self.logger.error("网络连接失败，无法访问 HuggingFace Hub")
+            return None
+        
+        # 尝试加载主要数据集
+        full_dataset = self._load_dataset_with_retry("claudios/ReVeal")
+        if full_dataset is None:
+            self.logger.warning("主要数据集 claudios/ReVeal 加载失败，尝试替代数据集...")
             
+            # 尝试替代数据集
+            alternatives = self._get_available_alternatives("reveal")
+            for alt_dataset in alternatives:
+                self.logger.info(f"尝试替代数据集: {alt_dataset}")
+                full_dataset = self._load_dataset_with_retry(alt_dataset, max_retries=2)
+                if full_dataset is not None:
+                    self.logger.info(f"成功加载替代数据集: {alt_dataset}")
+                    break
+            
+            if full_dataset is None:
+                self.logger.error("所有数据集加载尝试均失败")
+                return None
+        
+        try:
             # 分割数据集
             total_size = len(full_dataset["train"])
             train_size = int(total_size * 0.8)
@@ -162,16 +264,37 @@ class DataPreparator:
                 "val": val_dataset
             }
         except Exception as e:
-            self.logger.error(f"加载Reveal数据集失败: {e}")
+            self.logger.error(f"处理Reveal数据集时发生错误: {e}")
             return None
     
     def _load_devign_dataset(self) -> Optional[Dict[str, Dataset]]:
-        """加载Devign数据集"""
+        """加载Devign数据集 - 增强版网络处理"""
         self.logger.info("加载 Devign 数据集...")
-        try:
-            # 加载数据集
-            full_dataset = load_dataset("DetectVul/devign")
+        
+        # 首先测试网络连接
+        if not self._test_network_connectivity():
+            self.logger.error("网络连接失败，无法访问 HuggingFace Hub")
+            return None
+        
+        # 尝试加载主要数据集
+        full_dataset = self._load_dataset_with_retry("DetectVul/devign")
+        if full_dataset is None:
+            self.logger.warning("主要数据集 DetectVul/devign 加载失败，尝试替代数据集...")
             
+            # 尝试替代数据集
+            alternatives = self._get_available_alternatives("devign")
+            for alt_dataset in alternatives:
+                self.logger.info(f"尝试替代数据集: {alt_dataset}")
+                full_dataset = self._load_dataset_with_retry(alt_dataset, max_retries=2)
+                if full_dataset is not None:
+                    self.logger.info(f"成功加载替代数据集: {alt_dataset}")
+                    break
+            
+            if full_dataset is None:
+                self.logger.error("所有数据集加载尝试均失败")
+                return None
+        
+        try:
             # 分割数据集
             total_size = len(full_dataset["train"])
             train_size = int(total_size * 0.8)
@@ -187,7 +310,7 @@ class DataPreparator:
                 "val": val_dataset
             }
         except Exception as e:
-            self.logger.error(f"加载Devign数据集失败: {e}")
+            self.logger.error(f"处理Devign数据集时发生错误: {e}")
             return None
     
     def _save_dataset(self, dataset: Dict[str, Dataset], dataset_name: str) -> bool:
@@ -251,6 +374,57 @@ class DataPreparator:
         except Exception as e:
             self.logger.error(f"预处理数据集时发生错误: {e}")
             return False
+    
+    def check_network_and_provide_solutions(self) -> Dict:
+        """
+        检查网络连接和HuggingFace Hub访问，并提供解决方案
+        
+        Returns:
+            Dict: 检查结果和解决方案
+        """
+        result = {
+            "status": "",
+            "hf_access": "",
+            "solutions": []
+        }
+        
+        # 测试基本网络连接
+        try:
+            response = requests.get("https://huggingface.co", timeout=10)
+            if response.status_code == 200:
+                result["status"] = "网络连接正常"
+            else:
+                result["status"] = f"网络连接异常 (HTTP {response.status_code})"
+                result["solutions"].extend([
+                    "检查网络连接是否正常",
+                    "尝试访问其他网站确认网络状态",
+                    "检查防火墙设置"
+                ])
+        except Exception as e:
+            result["status"] = f"网络连接失败: {str(e)}"
+            result["solutions"].extend([
+                "检查网络连接是否正常",
+                "检查DNS设置",
+                "尝试重启网络设备",
+                "联系网络管理员"
+            ])
+        
+        # 测试HuggingFace Hub访问
+        try:
+            # 尝试获取模型信息
+            self.api.list_datasets(limit=1)
+            result["hf_access"] = "HuggingFace Hub访问正常"
+        except Exception as e:
+            result["hf_access"] = f"HuggingFace Hub访问失败: {str(e)}"
+            result["solutions"].extend([
+                "检查是否可以访问 https://huggingface.co",
+                "配置代理服务器 (HTTP_PROXY/HTTPS_PROXY)",
+                "使用VPN连接",
+                "检查HuggingFace服务状态",
+                "设置HF_ENDPOINT环境变量使用镜像站点"
+            ])
+        
+        return result
     
     def _preprocess_single_dataset(self, dataset_name: str) -> bool:
         """
