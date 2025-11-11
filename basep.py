@@ -5,8 +5,18 @@ import os
 import json
 import csv
 import logging
+import os
+import pickle
+import faiss
+import torch
+import numpy as np
+import Levenshtein
+from tqdm import tqdm
+from transformers import AutoTokenizer, AutoModel
+import pandas as pd
+from config.config import Config
 
-openai.api_base = "my api 11112222"
+openai.api_base = ""
 openai.api_key = ""
 
 templates = {
@@ -113,7 +123,154 @@ def main():
         logger.info("Recall: %f", recall)
         logger.info("F1 Score: %f", f1)
 
+class ExampleGenerator:
+    def __init__(self, config=None):
+        if config is None:
+            self.config = Config()
+        else:
+            self.config = config
+        
+        # 加载模型和分词器
+        self.tokenizer = AutoTokenizer.from_pretrained(self.config.model_name)
+        self.model = AutoModel.from_pretrained(self.config.model_name)
+        self.model.to(self.config.device)
+        
+        # 维度设置
+        self.dim = self.model.config.hidden_size
+        
+        # 索引相关
+        self.id2text = None
+        self.vecs = None
+        self.ids = None
+        self.index = None
+    
+    def load_data(self, train_code_path, train_ast_path, test_code_path, test_ast_path):
+        # 加载训练数据
+        df = pd.read_csv(train_code_path, header=None)
+        self.train_code_list = df[0].tolist()
+        
+        df = pd.read_csv(train_ast_path, header=None)
+        self.train_ast_list = df[0].tolist()
+        
+        # 加载测试数据
+        df = pd.read_csv(test_code_path, header=None)
+        self.test_code_list = df[0].tolist()
+        
+        df = pd.read_csv(test_ast_path, header=None)
+        self.test_ast_list = df[0].tolist()
+    
+    def encode_text(self, text):
+        # 使用预训练模型编码文本
+        inputs = self.tokenizer(
+            text,
+            padding=True,
+            truncation=True,
+            max_length=self.config.max_length,
+            return_tensors="pt"
+        ).to(self.config.device)
+        
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            # 使用CLS标记的输出作为文本表示
+            embeddings = outputs.last_hidden_state[:, 0, :]
+        
+        return embeddings.cpu().numpy()
+    
+    def build_index(self, n_list=1):
+        # 编码所有训练文本
+        all_vecs = []
+        for code in tqdm(self.train_code_list, desc="Encoding training data"):
+            vec = self.encode_text(code)
+            all_vecs.append(vec)
+        
+        self.vecs = np.concatenate(all_vecs, axis=0).astype("float32")
+        self.ids = np.array(range(len(self.train_code_list)), dtype="int64")
+        self.id2text = {idx: text for idx, text in enumerate(self.train_code_list)}
+        
+        # 构建FAISS索引
+        quant = faiss.IndexFlatIP(self.dim)
+        self.index = faiss.IndexIVFFlat(quant, self.dim, min(n_list, self.vecs.shape[0]))
+        self.index.train(self.vecs)
+        self.index.add_with_ids(self.vecs, self.ids)
+        self.index.nprob = 1
+    
+    def jaccard_similarity(self, s1, s2):
+        s1, s2 = set(s1), set(s2)
+        intersection = s1.intersection(s2)
+        union = s1.union(s2)
+        return 1.0 * len(intersection) / len(union) if union else 0
+    
+    def find_similar_examples(self, code, ast, top_k=5):
+        # 编码查询文本
+        vec = self.encode_text(code)
+        
+        # 搜索相似文本
+        _, sim_idx = self.index.search(vec, top_k)
+        sim_idx = sim_idx[0].tolist()
+        
+        # 计算额外的相似度分数并选择最佳示例
+        max_score = 0
+        max_idx = 0
+        
+        for idx in sim_idx:
+            # 代码相似度（Jaccard）
+            code_score = self.jaccard_similarity(
+                self.train_code_list[idx].split(), 
+                code.split()
+            )
+            
+            # AST相似度（Levenshtein）
+            ast_score = Levenshtein.seqratio(
+                str(self.train_ast_list[idx]).split(), 
+                str(ast).split()
+            )
+            
+            # 综合分数
+            score = 0.7 * code_score + 0.3 * ast_score
+            
+            if score > max_score:
+                max_score = score
+                max_idx = idx
+        
+        return self.train_code_list[max_idx], self.train_ast_list[max_idx]
+
 if __name__ == '__main__':
-    main()
-
-
+    config = Config()
+    generator = ExampleGenerator(config)
+    
+    # 加载数据
+    generator.load_data(
+        train_code_path="data/train_function_clean.csv",
+        train_ast_path="data/train_ast_clean.csv",
+        test_code_path="data/test_function_clean.csv",
+        test_ast_path="data/test_ast_clean.csv"
+    )
+    
+    # 构建索引
+    print("Building index...")
+    generator.build_index(n_list=1)
+    
+    # 为测试数据生成示例
+    print("Generating examples for test data...")
+    similar_codes = []
+    similar_asts = []
+    
+    for i in tqdm(range(len(generator.test_code_list))):
+        sim_code, sim_ast = generator.find_similar_examples(
+            generator.test_code_list[i], 
+            generator.test_ast_list[i], 
+            top_k=5
+        )
+        similar_codes.append(sim_code)
+        similar_asts.append(sim_ast)
+    
+    # 保存结果
+    os.makedirs(config.output_path, exist_ok=True)
+    
+    df = pd.DataFrame(similar_codes)
+    df.to_csv(os.path.join(config.output_path, "similar_codes.csv"), index=False, header=None)
+    
+    df = pd.DataFrame(similar_asts)
+    df.to_csv(os.path.join(config.output_path, "similar_asts.csv"), index=False, header=None)
+    
+    print("Examples generated and saved successfully!")

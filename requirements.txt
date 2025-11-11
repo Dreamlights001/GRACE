@@ -1,12 +1,47 @@
-openai
-pandas
-tqdm
-faiss-cpu
-torch
-numpy
-python-Levenshtein
-nlgeval
-transformers
-javalang
-nltk
-execjs
+# GRACE漏洞检测系统依赖文件
+# 适用于本地预训练模型推理，无需外部API
+
+# 核心依赖
+torch>=2.0.0
+transformers>=4.30.0
+datasets>=2.0.0
+pandas>=1.5.0
+numpy>=1.21.0
+
+# 机器学习和数据处理
+scikit-learn>=1.0.0
+faiss-cpu>=1.7.0
+tqdm>=4.64.0
+
+# 文本处理和代码分析
+nltk>=3.7
+javalang>=0.13.0
+python-Levenshtein>=0.20.0
+
+# HTTP请求和工具
+requests>=2.28.0
+huggingface-hub>=0.15.0
+
+# 开发和测试工具
+pytest>=7.0.0
+jupyter>=1.0.0
+
+# 可选依赖（用于特定功能）
+# 网络处理
+beautifulsoup4>=4.11.0
+
+# 额外的机器学习库
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# 性能监控
+psutil>=5.9.0
+
+# 数据验证
+jsonschema>=4.0.0
+
+# 注意事项：
+# 1. 不包含任何OpenAI或外部API依赖
+# 2. 支持CPU和GPU推理
+# 3. faiss-cpu用于CPU加速，如需GPU支持可改为faiss-gpu
+# 4. 根据需要安装可选依赖项
