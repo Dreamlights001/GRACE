@@ -450,17 +450,6 @@ def save_json_safe(data: Any, file_path: str) -> bool:
     """安全地保存JSON文件的别名"""
     return safe_json_dump(data, file_path)
 
-def estimate_model_size(model_name: str) -> float:
-    """估算模型大小（简化版）"""
-    # 基础估算：小型模型约 100-300MB，大型模型约 1-5GB
-    size_estimates = {
-        "microsoft/codebert-base": 440,  # MB
-        "microsoft/graphcodebert-base": 440,
-        "codet5-base": 220,
-        "codet5-small": 60
-    }
-    return size_estimates.get(model_name, 300)
-
 # 导出主要函数
 __all__ = [
     'setup_logging',

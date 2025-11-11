@@ -319,12 +319,21 @@ def get_model_manager(config: Optional[Config] = None, hf_token: Optional[str] =
         _model_manager = ModelManager(config, hf_token)
     return _model_manager
 
-def download_default_model(force: bool = False) -> bool:
-    """下载默认模型"""
+def download_default_model(model_name: str = None, force: bool = False) -> bool:
+    """下载模型
+    
+    Args:
+        model_name: 模型名称，如果为None则使用默认模型
+        force: 是否强制重新下载
+        
+    Returns:
+        bool: 下载是否成功
+    """
     config = Config()
-    default_model = config.model_config.get("default_model", "microsoft/codebert-base")
+    if model_name is None:
+        model_name = config.model_config.get("default_model", "microsoft/codebert-base")
     downloader = ModelDownloader(config)
-    model_path = downloader.download_model(default_model, force=force)
+    model_path = downloader.download_model(model_name, force=force)
     return model_path is not None
 
 def list_all_models() -> Dict[str, Dict[str, Any]]:
@@ -340,6 +349,22 @@ def clear_model_cache() -> bool:
     return downloader.clear_cache()
 
 # 便捷函数
+def check_model_exists(model_name: str) -> bool:
+    """检查模型是否存在
+    
+    Args:
+        model_name: 模型名称
+        
+    Returns:
+        bool: 模型是否存在
+    """
+    try:
+        config = Config()
+        model_path = config.models_dir / model_name
+        return model_path.exists() and any(model_path.iterdir())
+    except Exception:
+        return False
+
 def ensure_codebert_available() -> bool:
     """确保CodeBERT模型可用"""
     config = Config()
