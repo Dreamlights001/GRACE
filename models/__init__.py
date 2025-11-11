@@ -18,22 +18,40 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 
-from config.config import config
+# 使用配置实例，但避免循环导入问题
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config.config import Config
+
+# 创建配置实例但使用后续传递的方式
+_global_config = None
+
+def set_config(config_instance):
+    """设置全局配置实例"""
+    global _global_config
+    _global_config = config_instance
+    
+def get_config():
+    """获取全局配置实例"""
+    return _global_config
 
 logger = logging.getLogger(__name__)
 
 class LocalVulnerabilityDetector:
     """本地漏洞检测器"""
     
-    def __init__(self, model_name: Optional[str] = None, 
+    def __init__(self, config: Config, model_name: Optional[str] = None, 
                  embedding_model: Optional[str] = None):
         """
         初始化本地模型
         
         Args:
+            config: 配置对象
             model_name: 主要推理模型名称
             embedding_model: 嵌入模型名称  
         """
+        self.config = config
         self.model_name = model_name or config.model_name
         self.embedding_model = embedding_model or config.embedding_model
         self.device = config.device
@@ -55,7 +73,7 @@ class LocalVulnerabilityDetector:
         # 加载主要模型和tokenizer
         try:
             # 检查模型是否已下载
-            model_path = config.get_model_path(self.model_name)
+            model_path = self.config.get_model_path(self.model_name)
             
             if model_path.exists() and list(model_path.iterdir()):
                 logger.info(f"从本地路径加载模型: {model_path}")
@@ -110,7 +128,7 @@ class LocalVulnerabilityDetector:
         dimension = embeddings.shape[1]
         quantizer = faiss.IndexFlatIP(dimension)
         index = faiss.IndexIVFFlat(quantizer, dimension, 
-                                   min(config.faiss_nlist, len(texts)))
+                                   min(self.config.faiss_nlist, len(texts)))
         
         # 训练索引
         if len(texts) > 1:
@@ -154,7 +172,7 @@ class LocalVulnerabilityDetector:
         try:
             # 编码输入
             inputs = self.tokenizer(prompt, return_tensors="pt", 
-                                  truncation=True, max_length=config.max_length)
+                                  truncation=True, max_length=self.config.max_length)
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             # 生成
@@ -189,13 +207,13 @@ class LocalVulnerabilityDetector:
         """获取漏洞预测"""
         
         if use_graph and node_info and edge_info:
-            prompt = config.prompt_templates["with_graph"].format(
+            prompt = self.config.prompt_templates["with_graph"].format(
                 node_info=node_info,
                 edge_info=edge_info,
                 example=example
             )
         else:
-            prompt = config.prompt_templates["basic"]
+            prompt = self.config.prompt_templates["basic"]
         
         # 组合完整提示
         full_prompt = f"{code}\n\n{prompt}"
