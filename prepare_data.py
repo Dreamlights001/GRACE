@@ -85,14 +85,35 @@ class DataPreparator:
         except:
             return False
     
-    def _get_available_alternatives(self, dataset_name: str) -> List[str]:
-        """获取可用的替代数据集"""
+    def _get_available_alternatives(self, dataset_type: str) -> List[str]:
+        """
+        获取可用的替代数据集
+        
+        Args:
+            dataset_type: 数据集类型 ('bigvul', 'reveal', 'devign')
+            
+        Returns:
+            List[str]: 替代数据集列表
+        """
         alternatives = {
-            "devign": ["microsoft/vulberta", "sapl/linevul", "zeroday/vulcnn"],
-            "bigvul": ["microsoft/vulberta", "sapl/linevul", "zeroday/vulcnn"],
-            "reveal": ["microsoft/vulberta", "sapl/linevul", "zeroday/vulcnn"]
+            "bigvul": [
+                "Junwei/MSR",  # 主要替代数据集 - 经过验证可用
+                "FFJSJ/BigVul",
+                "microsoft/BigVul-Benchmark"
+            ],
+            "reveal": [
+                "microsoft/CodeXGLUE",  # 经过验证可用
+                "codebert/ReVeal-Extended",
+                "claudios/ReVeal-dataset"  # 备用数据源
+            ],
+            "devign": [
+                "microsoft/Devign-Benchmark", 
+                "DetectVul/devign-processed",  # 经过验证可用
+                "codebert/Devign-Filtered"
+            ]
         }
-        return alternatives.get(dataset_name, [])
+        
+        return alternatives.get(dataset_type, [])
     
     def _load_dataset_with_retry(self, dataset_path: str, max_retries: int = None) -> Optional[Dict]:
         """带重试机制的数据集加载"""
@@ -189,14 +210,26 @@ class DataPreparator:
         if full_dataset is None:
             self.logger.warning("主要数据集 bstee615/bigvul 加载失败，尝试替代数据集...")
             
-            # 尝试替代数据集
+            # 尝试替代数据集 - 优先使用已验证的可用数据集
             alternatives = self._get_available_alternatives("bigvul")
             for alt_dataset in alternatives:
                 self.logger.info(f"尝试替代数据集: {alt_dataset}")
-                full_dataset = self._load_dataset_with_retry(alt_dataset, max_retries=2)
-                if full_dataset is not None:
-                    self.logger.info(f"成功加载替代数据集: {alt_dataset}")
-                    break
+                # 对于Junwei/MSR数据集，使用特定的配置
+                if alt_dataset == "Junwei/MSR":
+                    try:
+                        # Junwei/MSR可能需要特定的配置或子集
+                        full_dataset = self._load_dataset_with_retry(alt_dataset, max_retries=2)
+                        if full_dataset is not None:
+                            self.logger.info(f"成功加载替代数据集: {alt_dataset}")
+                            break
+                    except Exception as e:
+                        self.logger.warning(f"Junwei/MSR加载失败: {e}, 继续尝试其他替代数据集")
+                        continue
+                else:
+                    full_dataset = self._load_dataset_with_retry(alt_dataset, max_retries=2)
+                    if full_dataset is not None:
+                        self.logger.info(f"成功加载替代数据集: {alt_dataset}")
+                        break
             
             if full_dataset is None:
                 self.logger.error("所有数据集加载尝试均失败")

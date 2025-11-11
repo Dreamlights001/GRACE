@@ -44,7 +44,19 @@ GRACE/
 pip install -r requirements.txt
 ```
 
-### 2. 下载预训练模型
+### 2. 数据准备（可选）
+
+```bash
+# 自动下载所有数据集
+python main.py --download-data
+
+# 或下载特定数据集
+python main.py --download-data bigvul
+```
+
+> 系统会自动检测网络连接，提供重试机制和错误恢复方案
+
+### 3. 下载预训练模型
 
 ```bash
 python main.py --download-model
@@ -52,7 +64,7 @@ python main.py --download-model
 
 > 自动下载 microsoft/codebert-base 模型（约440MB），支持自定义模型
 
-### 3. 运行评估
+### 4. 运行评估
 
 ```bash
 # 评估BigVul数据集
@@ -65,7 +77,7 @@ python main.py --mode eval --dataset reveal
 python main.py --mode eval --dataset devign
 ```
 
-### 4. 交互式检测
+### 5. 交互式检测
 
 ```bash
 python main.py --mode interactive
@@ -196,13 +208,52 @@ datasets = {
 
 ### 数据准备
 
+GRACE提供了增强的数据下载功能，支持自动下载和预处理多个漏洞检测数据集：
+
 ```bash
-# 创建数据目录
+# 自动下载所有数据集
+python main.py --download-data
+
+# 下载特定数据集
+python main.py --download-data bigvul
+python main.py --download-data reveal  
+python main.py --download-data devign
+
+# 检查网络连接和HuggingFace访问
+python -c "from prepare_data import DataPreparator; dp = DataPreparator('data'); print(dp.check_network_and_provide_solutions())"
+```
+
+#### 数据下载特性
+
+- **🌐 智能网络检测**: 自动检测网络连接和HuggingFace Hub访问状态
+- **🔄 自动重试机制**: 网络波动时自动重试下载（最多3次）
+- **📦 多源下载**: 支持主数据源和备用数据源切换
+- **🔧 错误恢复**: 提供详细的网络问题解决方案
+
+#### 手动数据准备
+
+如果自动下载遇到问题，可以手动准备数据：
+
+```bash
+# 创建数据目录结构
 mkdir -p data/raw data/processed
 
-# 下载数据集（需要手动下载）
-# 将数据集文件放置到对应目录
+# 下载数据集文件并放置到对应目录
+# BigVul: https://huggingface.co/datasets/Junwei/MSR
+# Reveal: https://huggingface.co/datasets/claudios/ReVeal  
+# Devign: https://huggingface.co/datasets/Junwei/MSR
 ```
+
+#### 网络问题解决方案
+
+如果遇到网络连接问题，系统会自动提供以下解决方案：
+
+1. **检查网络连接**: 确保设备已连接到互联网
+2. **配置代理**: 设置HTTP/HTTPS代理环境变量
+3. **使用镜像源**: 配置HuggingFace镜像
+4. **检查防火墙**: 确保防火墙允许访问HuggingFace
+5. **使用VPN**: 在网络受限环境下使用VPN
+6. **手动下载**: 从备用链接手动下载数据集
 
 ## 🔧 高级配置
 
@@ -245,6 +296,15 @@ prompt = manager.create_analysis_prompt(
    ```bash
    # 检查网络连接
    python -c "from utils.model_downloader import download_default_model; download_default_model(force=True)"
+   ```
+
+2. **数据集下载失败**
+   ```bash
+   # 检查网络连接和HuggingFace访问
+   python -c "from prepare_data import DataPreparator; dp = DataPreparator('data'); print(dp.check_network_and_provide_solutions())"
+   
+   # 手动下载特定数据集
+   python main.py --download-data bigvul
    ```
 
 2. **GPU内存不足**
