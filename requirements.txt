@@ -1,0 +1,12 @@
+openai
+pandas
+tqdm
+faiss-cpu
+torch
+numpy
+python-Levenshtein
+nlgeval
+transformers
+javalang
+nltk
+execjs
