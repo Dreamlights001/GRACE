@@ -6,9 +6,11 @@
 import os
 import logging
 import hashlib
+import time
+import requests
 from pathlib import Path
-from typing import Optional, Dict, Any
-from huggingface_hub import hf_hub_download, snapshot_download, login
+from typing import Optional, Dict, Any, List
+from huggingface_hub import hf_hub_download, snapshot_download, login, HfApi
 import torch
 from transformers import AutoTokenizer, AutoModel
 
@@ -22,7 +24,7 @@ from config.config import Config
 logger = logging.getLogger(__name__)
 
 class ModelDownloader:
-    """模型下载和管理器"""
+    """模型下载和管理器 - 增强版网络处理"""
     
     def __init__(self, config: Optional[Config] = None, hf_token: Optional[str] = None):
         if config is None:
@@ -31,6 +33,9 @@ class ModelDownloader:
         self.model_dir = self.config.models_dir
         self.model_dir.mkdir(exist_ok=True)
         self.hf_token = hf_token
+        self.max_retries = 3
+        self.retry_delay = 5
+        self.api = HfApi()
         
         if hf_token:
             try:
@@ -39,9 +44,74 @@ class ModelDownloader:
             except Exception as e:
                 logger.warning(f"Hugging Face登录失败: {e}")
     
+    def _test_network_connectivity(self) -> bool:
+        """测试网络连接性"""
+        try:
+            # 测试基本网络连接
+            response = requests.get("https://huggingface.co", timeout=10)
+            return response.status_code == 200
+        except Exception as e:
+            logger.warning(f"网络连接测试失败: {e}")
+            return False
+    
+    def _get_available_alternatives(self, model_name: str) -> List[str]:
+        """获取可用的替代模型"""
+        alternatives = [
+            "microsoft/codebert-base",
+            "microsoft/graphcodebert-base", 
+            "codet5-base",
+            "codet5-small",
+            "Salesforce/codet5-base",
+            "huggingface/CodeBERTa-small-v1"
+        ]
+        
+        # 过滤掉当前模型
+        return [m for m in alternatives if m != model_name]
+    
+    def _download_with_retry(self, model_name: str, force: bool = False) -> Optional[str]:
+        """带重试机制的下载"""
+        model_path = self.model_dir / model_name
+        
+        for attempt in range(self.max_retries):
+            try:
+                logger.info(f"下载尝试 {attempt + 1}/{self.max_retries}: {model_name}")
+                
+                # 检查网络连接
+                if attempt > 0:  # 重试时检查网络
+                    if not self._test_network_connectivity():
+                        logger.warning("网络连接不可用，等待后重试...")
+                        time.sleep(self.retry_delay)
+                        continue
+                
+                # 尝试下载
+                snapshot_download(
+                    repo_id=model_name,
+                    local_dir=str(model_path),
+                    local_dir_use_symlinks=False,
+                    token=self.hf_token,
+                    resume_download=True  # 启用断点续传
+                )
+                
+                # 验证下载
+                if self._verify_model(model_path, model_name):
+                    logger.info(f"模型下载成功: {model_path}")
+                    return str(model_path)
+                else:
+                    logger.warning("模型下载验证失败")
+                    
+            except Exception as e:
+                logger.warning(f"下载尝试 {attempt + 1} 失败: {e}")
+                if attempt < self.max_retries - 1:
+                    logger.info(f"等待 {self.retry_delay} 秒后重试...")
+                    time.sleep(self.retry_delay)
+                else:
+                    logger.error(f"所有重试尝试失败: {model_name}")
+        
+        return None
+    
     def download_model(self, model_name: str, force: bool = False) -> Optional[str]:
         """
-        下载预训练模型
+        下载预训练模型 - 增强版
         
         Args:
             model_name: 模型名称
@@ -53,31 +123,34 @@ class ModelDownloader:
         model_path = self.model_dir / model_name
         
         if model_path.exists() and not force:
-            logger.info(f"模型已存在: {model_path}")
-            return str(model_path)
-        
-        try:
-            logger.info(f"开始下载模型: {model_name}")
-            
-            # 下载模型文件
-            snapshot_download(
-                repo_id=model_name,
-                local_dir=str(model_path),
-                local_dir_use_symlinks=False,
-                token=self.hf_token
-            )
-            
-            # 验证下载
             if self._verify_model(model_path, model_name):
-                logger.info(f"模型下载成功: {model_path}")
+                logger.info(f"模型已存在且有效: {model_path}")
                 return str(model_path)
             else:
-                logger.error("模型下载验证失败")
-                return None
+                logger.warning("模型存在但验证失败，将重新下载")
+        
+        # 首先尝试下载目标模型
+        result = self._download_with_retry(model_name, force)
+        
+        # 如果下载失败，尝试替代模型
+        if result is None:
+            logger.warning(f"下载模型 {model_name} 失败，尝试替代模型")
+            alternatives = self._get_available_alternatives(model_name)
+            
+            for alt_model in alternatives:
+                alt_path = self.model_dir / alt_model
+                if alt_path.exists() and self._verify_model(alt_path, alt_model):
+                    logger.info(f"使用现有替代模型: {alt_model}")
+                    return str(alt_path)
                 
-        except Exception as e:
-            logger.error(f"下载模型失败 {model_name}: {e}")
-            return None
+                logger.info(f"尝试下载替代模型: {alt_model}")
+                alt_result = self._download_with_retry(alt_model, force)
+                if alt_result:
+                    logger.info(f"替代模型下载成功: {alt_model}")
+                    # 可选：创建符号链接或复制到目标名称
+                    return alt_result
+        
+        return result
     
     def download_tokenizer(self, model_name: str, force: bool = False) -> Optional[str]:
         """
@@ -370,3 +443,40 @@ def ensure_codebert_available() -> bool:
     config = Config()
     model_manager = get_model_manager(config)
     return model_manager.ensure_model_available("microsoft/codebert-base")
+
+def check_network_and_provide_solutions() -> Dict[str, str]:
+    """检查网络连接并提供解决方案"""
+    solutions = {}
+    
+    # 检查基本网络连接
+    try:
+        response = requests.get("https://huggingface.co", timeout=10)
+        if response.status_code == 200:
+            solutions["status"] = "网络连接正常"
+        else:
+            solutions["status"] = f"网络连接异常，状态码: {response.status_code}"
+    except Exception as e:
+        solutions["status"] = f"网络连接失败: {e}"
+        solutions["solutions"] = [
+            "1. 检查网络连接",
+            "2. 配置代理（如需要）: export https_proxy=http://proxy:port",
+            "3. 尝试使用HuggingFace镜像站点",
+            "4. 检查防火墙设置"
+        ]
+    
+    # 检查HuggingFace Hub访问
+    try:
+        api = HfApi()
+        # 尝试获取模型信息来测试API访问
+        model_info = api.model_info("microsoft/codebert-base", timeout=10)
+        solutions["hf_access"] = "HuggingFace Hub访问正常"
+    except Exception as e:
+        solutions["hf_access"] = f"HuggingFace Hub访问失败: {e}"
+        solutions["hf_solutions"] = [
+            "1. 尝试设置HuggingFace镜像: export HF_ENDPOINT=https://hf-mirror.com",
+            "2. 使用HuggingFace Token认证",
+            "3. 清理缓存: rm -rf ~/.cache/huggingface/",
+            "4. 升级huggingface_hub: pip install --upgrade huggingface_hub"
+        ]
+    
+    return solutions
