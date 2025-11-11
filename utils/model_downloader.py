@@ -12,15 +12,23 @@ from huggingface_hub import hf_hub_download, snapshot_download, login
 import torch
 from transformers import AutoTokenizer, AutoModel
 
-from config.config import config
+import os
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from config.config import Config
 
 logger = logging.getLogger(__name__)
 
 class ModelDownloader:
     """模型下载和管理器"""
     
-    def __init__(self, hf_token: Optional[str] = None):
-        self.model_dir = config.model_dir
+    def __init__(self, config: Optional[Config] = None, hf_token: Optional[str] = None):
+        if config is None:
+            config = Config()
+        self.config = config
+        self.model_dir = self.config.models_dir
         self.model_dir.mkdir(exist_ok=True)
         self.hf_token = hf_token
         
@@ -233,10 +241,13 @@ class ModelDownloader:
 class ModelManager:
     """模型管理器 - 更高层次的模型管理接口"""
     
-    def __init__(self, hf_token: Optional[str] = None):
-        self.downloader = ModelDownloader(hf_token)
+    def __init__(self, config: Optional[Config] = None, hf_token: Optional[str] = None):
+        if config is None:
+            config = Config()
+        self.config = config
+        self.downloader = ModelDownloader(config, hf_token)
         self.loaded_models = {}
-        self.model_config = config.model_config
+        self.model_config = self.config.model_config
     
     def ensure_model_available(self, model_name: str) -> bool:
         """确保模型可用"""
@@ -301,32 +312,36 @@ class ModelManager:
 # 全局模型管理器实例
 _model_manager = None
 
-def get_model_manager(hf_token: Optional[str] = None) -> ModelManager:
+def get_model_manager(config: Optional[Config] = None, hf_token: Optional[str] = None) -> ModelManager:
     """获取全局模型管理器"""
     global _model_manager
     if _model_manager is None:
-        _model_manager = ModelManager(hf_token)
+        _model_manager = ModelManager(config, hf_token)
     return _model_manager
 
 def download_default_model(force: bool = False) -> bool:
     """下载默认模型"""
+    config = Config()
     default_model = config.model_config.get("default_model", "microsoft/codebert-base")
-    downloader = ModelDownloader()
+    downloader = ModelDownloader(config)
     model_path = downloader.download_model(default_model, force=force)
     return model_path is not None
 
 def list_all_models() -> Dict[str, Dict[str, Any]]:
     """列出所有模型"""
-    downloader = ModelDownloader()
+    config = Config()
+    downloader = ModelDownloader(config)
     return downloader.list_downloaded_models()
 
 def clear_model_cache() -> bool:
     """清理模型缓存"""
-    downloader = ModelDownloader()
+    config = Config()
+    downloader = ModelDownloader(config)
     return downloader.clear_cache()
 
 # 便捷函数
 def ensure_codebert_available() -> bool:
     """确保CodeBERT模型可用"""
-    model_manager = get_model_manager()
+    config = Config()
+    model_manager = get_model_manager(config)
     return model_manager.ensure_model_available("microsoft/codebert-base")

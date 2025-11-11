@@ -300,9 +300,9 @@ class CodeRetriever:
         except Exception:
             return 0.0
 
-def create_detector(model_name: Optional[str] = None) -> LocalVulnerabilityDetector:
+def create_detector(config: Config, model_name: Optional[str] = None) -> LocalVulnerabilityDetector:
     """创建漏洞检测器的工厂函数"""
-    return LocalVulnerabilityDetector(model_name)
+    return LocalVulnerabilityDetector(config, model_name)
 
 def create_retriever(detector: LocalVulnerabilityDetector) -> CodeRetriever:
     """创建代码检索器的工厂函数"""

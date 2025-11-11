@@ -426,18 +426,56 @@ class ProgressBar:
         if self.current >= self.total:
             print()  # 换行
 
+def ensure_directories():
+    """确保项目必要的目录结构存在"""
+    root = get_project_root()
+    
+    required_dirs = [
+        root / "config",
+        root / "data" / "raw", 
+        root / "data" / "processed",
+        root / "models",
+        root / "utils",
+        root / "logs",
+        root / "outputs",
+        root / "logs"
+    ]
+    
+    for dir_path in required_dirs:
+        dir_path.mkdir(parents=True, exist_ok=True)
+    
+    return True
+
+def save_json_safe(data: Any, file_path: str) -> bool:
+    """安全地保存JSON文件的别名"""
+    return safe_json_dump(data, file_path)
+
+def estimate_model_size(model_name: str) -> float:
+    """估算模型大小（简化版）"""
+    # 基础估算：小型模型约 100-300MB，大型模型约 1-5GB
+    size_estimates = {
+        "microsoft/codebert-base": 440,  # MB
+        "microsoft/graphcodebert-base": 440,
+        "codet5-base": 220,
+        "codet5-small": 60
+    }
+    return size_estimates.get(model_name, 300)
+
 # 导出主要函数
 __all__ = [
     'setup_logging',
     'get_project_root', 
     'create_directory_structure',
+    'ensure_directories',
     'validate_code_content',
     'clean_code',
     'get_file_info',
     'safe_json_load',
     'safe_json_dump',
+    'save_json_safe',
     'create_sample_config',
     'generate_readme_content',
     'check_system_requirements',
-    'ProgressBar'
+    'ProgressBar',
+    'estimate_model_size'
 ]

@@ -85,9 +85,8 @@ class GraceApplication:
             
             # 初始化检测器
             self.detector = LocalVulnerabilityDetector(
-                model_name=model_name,
-                max_length=self.config.max_length,
-                device=self.config.device
+                config=self.config,
+                model_name=model_name
             )
             
             print("✅ 模型初始化成功")
@@ -119,11 +118,7 @@ class GraceApplication:
             
             # 初始化代码检索器
             print("🔄 初始化代码检索器...")
-            self.retriever = CodeRetriever(
-                model=self.detector.tokenizer,
-                embedding_model=self.config.embedding_model,
-                device=self.config.device
-            )
+            self.retriever = CodeRetriever(self.detector)
             print("✅ 代码检索器初始化成功")
             
             return True
