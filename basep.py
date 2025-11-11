@@ -6,7 +6,7 @@ import json
 import csv
 import logging
 
-openai.api_base = ""
+openai.api_base = "my api"
 openai.api_key = ""
 
 templates = {
