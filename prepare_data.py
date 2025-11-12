@@ -652,7 +652,14 @@ class DataPreparator:
         
         # 确保必要的列存在
         if 'label' in df.columns:
-            df['label'] = df['label'].astype(int)
+            # Devign数据集的标签可能是列表格式，需要特殊处理
+            try:
+                # 首先尝试直接转换为整数
+                df['label'] = df['label'].astype(int)
+            except (ValueError, TypeError):
+                # 如果转换失败，可能是列表格式，取第一个元素
+                self.logger.warning("Devign标签列包含列表格式，进行特殊处理")
+                df['label'] = df['label'].apply(lambda x: int(x[0]) if isinstance(x, list) and len(x) > 0 else int(x))
         
         return df
     
