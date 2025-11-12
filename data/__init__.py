@@ -38,7 +38,7 @@ class DataProcessor:
             
             if not dataset_path.exists():
                 logger.warning(f"数据集文件不存在: {dataset_path}")
-                logger.info(f"请手动下载数据集: {config.datasets[dataset_name]['download_url']}")
+                logger.info(f"请手动下载数据集: {config.datasets[dataset_name].get('huggingface_url', '未知')}")
                 return []
             
             logger.info(f"加载数据集: {dataset_path}")
