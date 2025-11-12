@@ -20,7 +20,7 @@ class Config:
             self.data_root = Path(data_root)
         else:
             # 默认使用云计算平台路径
-            self.data_root = Path("/root/sj-tmp/-dataset/")
+            self.data_root = Path("/root/sj-tmp/dataset/")
         
         self.data_dir = self.data_root  # 数据集存储目录
         self.models_dir = self.project_root / "models"
