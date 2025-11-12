@@ -565,7 +565,7 @@ class DataPreparator:
             
             for split in ["train", "test"]:
                 filename = local_files[split]
-                filepath = self.data_root / filename
+                filepath = self.config.get_dataset_path(dataset_name, split)
                 
                 if not filepath.exists():
                     self.logger.error(f"数据文件不存在: {filepath}")
@@ -581,12 +581,19 @@ class DataPreparator:
                     df = self._standardize_reveal(df)
                 elif dataset_name == "devign":
                     df = self._standardize_devign(df)
+
+                df = df.loc[:, ~df.columns.duplicated()]
+
+                keep_cols = [
+                    "code", "label", "project", "node", "edge", "ast", "example", "code_fixed"
+                ]
+                df = df[[c for c in keep_cols if c in df.columns]]
                 
                 processed_data[split] = df
                 
                 # 保存处理后的数据
                 processed_filename = processed_files[split]
-                processed_filepath = self.data_root / processed_filename
+                processed_filepath = self.config.get_processed_dataset_path(dataset_name, split)
                 
                 processed_df = df.to_json(processed_filepath, orient='records', lines=True, force_ascii=False)
                 self.logger.info(f"处理后的数据已保存: {processed_filepath}")
