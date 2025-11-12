@@ -20,17 +20,20 @@ class Config:
             self.data_root = Path(data_root)
         else:
             # 默认使用云计算平台路径
-            self.data_root = Path("/root/sj-tmp/dataset/")
+            self.data_root = Path("/root/sj-tmp/-dataset/")
         
         self.data_dir = self.data_root  # 数据集存储目录
-        self.models_dir = Path("/root/sj-tmp/pre_train")  # 预训练模型存储目录
+        self.models_dir = self.project_root / "models"
         self.output_dir = self.project_root / "outputs"
         self.logs_dir = self.project_root / "logs"
         self.figs_dir = self.project_root / "figs"
         
-        # 创建必要目录
+        # 创建必要目录（使用try-except处理权限问题）
         for directory in [self.data_dir, self.models_dir, self.output_dir, self.logs_dir, self.figs_dir]:
-            directory.mkdir(exist_ok=True)
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                logger.warning(f"创建目录失败 {directory}: {e}")
         
         # 模型配置
         self.model_name = "microsoft/codebert-base"  # 默认模型，可选择其他

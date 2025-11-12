@@ -43,8 +43,18 @@ class DataProcessor:
             
             logger.info(f"加载数据集: {dataset_path}")
             
+            data = []
             with open(dataset_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+                # 尝试JSON Lines格式（每行一个JSON对象）
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if line:  # 跳过空行
+                        try:
+                            item = json.loads(line)
+                            data.append(item)
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"第{line_num}行JSON解析失败: {e}")
+                            continue
             
             logger.info(f"成功加载 {len(data)} 个样本")
             return data
