@@ -659,7 +659,11 @@ class DataPreparator:
             except (ValueError, TypeError):
                 # 如果转换失败，可能是列表格式，取第一个元素
                 self.logger.warning("Devign标签列包含列表格式，进行特殊处理")
-                df['label'] = df['label'].apply(lambda x: int(x[0]) if isinstance(x, list) and len(x) > 0 else int(x))
+                # 使用更安全的转换方法
+                df['label'] = df['label'].apply(lambda x: 
+                    int(x[0]) if isinstance(x, list) and len(x) > 0 else 
+                    int(x) if pd.notna(x) else 0
+                )
         
         return df
     

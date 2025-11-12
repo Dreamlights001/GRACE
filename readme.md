@@ -1,4 +1,3 @@
-```
 # GRACE: 基于图结构和上下文学习的本地LLM漏洞检测系统
 
 ![GRACE Logo](figs/approach.png)
