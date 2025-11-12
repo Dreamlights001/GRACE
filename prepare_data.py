@@ -759,7 +759,7 @@ class DataPreparator:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description="GRACE项目数据准备工具")
-    parser.add_argument("--data-root", type=str, default="/root/sj-tmp/-dataset/",
+    parser.add_argument("--data-root", type=str, default="/root/sj-tmp/dataset/",
                        help="数据存储根目录")
     parser.add_argument("--dataset", type=str, 
                        choices=["bigvul", "reveal", "devign"],

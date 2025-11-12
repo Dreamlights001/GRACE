@@ -1,3 +1,4 @@
+```
 # GRACE: 基于图结构和上下文学习的本地LLM漏洞检测系统
 
 ![GRACE Logo](figs/approach.png)
@@ -6,7 +7,7 @@ GRACE (Graph structure and in-context learning Enhanced vulnerability detection)
 
 ## 🚀 最新更新
 
-- **☁️ 云计算平台适配** - 默认数据集路径配置为 `/root/sj-tmp/-dataset/`
+- **☁️ 云计算平台适配** - 默认数据集路径配置为 `/root/sj-tmp/dataset/`
 - **🌐 镜像源支持** - 自动切换HuggingFace镜像源，提升网络稳定性
 - **🔄 智能重试机制** - 指数退避重试和网络故障自动恢复
 - **🔧 代理配置支持** - 支持HTTP/HTTPS代理环境变量配置
