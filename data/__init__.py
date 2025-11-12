@@ -210,6 +210,19 @@ class DataProcessor:
         except Exception as e:
             logger.error(f"保存数据失败: {e}")
             return False
+    
+    def get_data_items(self) -> List[Dict[str, Any]]:
+        """
+        获取当前加载的数据项
+        
+        Returns:
+            数据项列表
+        """
+        # 这个方法需要返回当前加载的数据
+        # 由于DataProcessor没有存储当前数据的状态，我们需要返回空列表
+        # 或者实现一个机制来存储当前加载的数据
+        logger.warning("get_data_items() 方法未实现完整功能，返回空列表")
+        return []
 
 class DatasetInfo:
     """数据集信息管理"""

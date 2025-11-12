@@ -113,7 +113,7 @@ class GraceApplication:
             
             # 初始化数据处理器
             print("🔄 初始化数据处理器...")
-            self.data_processor = DataProcessor(self.config)
+            self.data_processor = DataProcessor()
             print("✅ 数据处理器初始化成功")
             
             # 初始化代码检索器
