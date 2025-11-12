@@ -194,7 +194,7 @@ class LocalVulnerabilityDetector:
         
         return results
     
-    def generate_prediction(self, prompt: str, max_length: int = 100) -> str:
+    def generate_prediction(self, prompt: str, max_new_tokens: int = 64) -> str:
         """使用本地模型生成预测"""
         try:
             # 编码输入
@@ -206,10 +206,10 @@ class LocalVulnerabilityDetector:
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_length=max_length,
+                    max_new_tokens=max_new_tokens,
                     num_return_sequences=1,
                     temperature=0.1,
-                    do_sample=True,
+                    do_sample=False,
                     pad_token_id=self.tokenizer.eos_token_id
                 )
             
