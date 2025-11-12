@@ -4,6 +4,8 @@
 """
 
 import os
+import json
+import re
 import torch
 import logging
 from pathlib import Path
@@ -223,6 +225,76 @@ class LocalVulnerabilityDetector:
         except Exception as e:
             logger.error(f"生成预测失败: {e}")
             return "生成失败"
+
+    def predict_vulnerability(self, prompt: str) -> Dict[str, Any]:
+        try:
+            text = self.generate_prediction(prompt)
+            parsed = None
+            try:
+                if isinstance(text, str):
+                    s = text.strip()
+                    if '{' in s and '}' in s:
+                        i = s.find('{')
+                        j = s.rfind('}')
+                        block = s[i:j+1]
+                        parsed = json.loads(block)
+                    else:
+                        parsed = json.loads(s)
+            except Exception:
+                parsed = None
+            has_vul = False
+            conf = 0.5
+            vtype = "未知"
+            sugg = ""
+            if isinstance(parsed, dict):
+                hv = parsed.get('has_vulnerability')
+                if isinstance(hv, bool):
+                    has_vul = hv
+                elif isinstance(hv, (int, float)):
+                    has_vul = bool(int(hv))
+                elif isinstance(hv, str):
+                    t = hv.strip().lower()
+                    has_vul = t in ('true','是','yes','1') and t not in ('false','否','no','0')
+                c = parsed.get('confidence')
+                try:
+                    conf = float(c)
+                except Exception:
+                    conf = 0.5
+                vt = parsed.get('vulnerability_type')
+                if isinstance(vt, str) and vt.strip():
+                    vtype = vt.strip()
+                sg = parsed.get('suggestion') or parsed.get('explanation') or ""
+                if isinstance(sg, str):
+                    sugg = sg.strip()
+            else:
+                s = (text or "").lower()
+                if ('vulnerable' in s or '漏洞' in s or '不安全' in s) and ('non-vulnerable' not in s and '无漏洞' not in s and '安全' not in s):
+                    has_vul = True
+                m = re.search(r"([01]?\.\d+)", s)
+                if m:
+                    try:
+                        conf = max(0.0, min(1.0, float(m.group(1))))
+                    except Exception:
+                        conf = 0.5
+                for key in ['sql','注入','buffer','溢出','xss','跨站','命令注入','use-after-free','race','越界']:
+                    if key in s:
+                        vtype = key
+                        break
+                sugg = text.strip()
+            return {
+                'has_vulnerability': has_vul,
+                'confidence': float(conf),
+                'vulnerability_type': vtype,
+                'suggestion': sugg
+            }
+        except Exception as e:
+            logger.error(f"预测失败: {e}")
+            return {
+                'has_vulnerability': False,
+                'confidence': 0.0,
+                'vulnerability_type': '未知',
+                'suggestion': ''
+            }
     
     def get_vulnerability_prediction(self, code: str, 
                                    node_info: str = "",
