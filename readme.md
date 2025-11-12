@@ -2,7 +2,14 @@
 
 ![GRACE Logo](figs/approach.png)
 
-GRACE (Graph structure and in-context learning Enhanced vulnerability detection) 是一个基于大语言模型的软件漏洞检测系统。本项目重构了原始实现，**完全支持本地预训练模型推理，无需任何外部API依赖**。
+GRACE (Graph structure and in-context learning Enhanced vulnerability detection) 是一个基于大语言模型的软件漏洞检测系统。本项目重构了原始实现，**完全支持本地预训练模型推理，无需任何外部API依赖**，并针对云计算平台部署进行了优化。
+
+## 🚀 最新更新
+
+- **☁️ 云计算平台适配** - 默认数据集路径配置为 `/root/sj-tmp/-dataset/`
+- **🌐 镜像源支持** - 自动切换HuggingFace镜像源，提升网络稳定性
+- **🔄 智能重试机制** - 指数退避重试和网络故障自动恢复
+- **🔧 代理配置支持** - 支持HTTP/HTTPS代理环境变量配置
 
 ## 🌟 主要特性
 
@@ -13,6 +20,8 @@ GRACE (Graph structure and in-context learning Enhanced vulnerability detection)
 - **🎯 上下文学习** - 智能示例检索和相似代码匹配
 - **📈 完整评估** - 支持Accuracy、Precision、Recall、F1等指标
 - **💻 交互式检测** - 实时代码漏洞检测
+- **☁️ 云计算优化** - 针对云平台部署的路径和网络配置
+- **🌐 镜像源支持** - 自动切换HuggingFace镜像源，提升稳定性
 
 ## 🏗️ 项目结构
 
@@ -47,14 +56,17 @@ pip install -r requirements.txt
 ### 2. 数据准备（可选）
 
 ```bash
-# 自动下载所有数据集
+# 自动下载所有数据集（使用云计算平台路径 /root/sj-tmp/-dataset/）
 python main.py --download-data
 
 # 或下载特定数据集
 python main.py --download-data bigvul
+
+# 使用自定义数据路径
+python main.py --download-data --data-root /your/custom/path/
 ```
 
-> 系统会自动检测网络连接，提供重试机制和错误恢复方案
+> 系统会自动检测网络连接，提供重试机制和错误恢复方案，支持镜像源自动切换
 
 ### 3. 下载预训练模型
 
@@ -211,13 +223,16 @@ datasets = {
 GRACE提供了增强的数据下载功能，支持自动下载和预处理多个漏洞检测数据集：
 
 ```bash
-# 自动下载所有数据集
+# 自动下载所有数据集（默认使用云计算平台路径 /root/sj-tmp/-dataset/）
 python main.py --download-data
 
 # 下载特定数据集
 python main.py --download-data bigvul
 python main.py --download-data reveal  
 python main.py --download-data devign
+
+# 使用自定义数据路径
+python main.py --download-data --data-root /your/custom/path/
 
 # 检查网络连接和HuggingFace访问
 python -c "from prepare_data import DataPreparator; dp = DataPreparator('data'); print(dp.check_network_and_provide_solutions())"
@@ -229,6 +244,8 @@ python -c "from prepare_data import DataPreparator; dp = DataPreparator('data');
 - **🔄 自动重试机制**: 网络波动时自动重试下载（最多3次）
 - **📦 多源下载**: 支持主数据源和备用数据源切换
 - **🔧 错误恢复**: 提供详细的网络问题解决方案
+- **☁️ 云计算适配**: 默认路径配置为云计算平台环境
+- **🌐 镜像源支持**: 自动切换多个HuggingFace镜像源
 
 #### 手动数据准备
 
@@ -250,10 +267,21 @@ mkdir -p data/raw data/processed
 
 1. **检查网络连接**: 确保设备已连接到互联网
 2. **配置代理**: 设置HTTP/HTTPS代理环境变量
-3. **使用镜像源**: 配置HuggingFace镜像
+3. **使用镜像源**: 自动切换多个HuggingFace镜像源（已内置支持）
 4. **检查防火墙**: 确保防火墙允许访问HuggingFace
 5. **使用VPN**: 在网络受限环境下使用VPN
 6. **手动下载**: 从备用链接手动下载数据集
+
+#### 云计算平台部署
+
+项目已针对云计算平台进行优化：
+
+- **默认数据路径**: `/root/sj-tmp/-dataset/`
+- **镜像源支持**: 内置多个HuggingFace镜像源，自动选择最佳连接
+- **网络重试**: 指数退避重试机制，适应网络波动
+- **代理配置**: 支持HTTP_PROXY/HTTPS_PROXY环境变量
+
+在云计算平台上部署时，系统会自动检测网络环境并选择最优配置。
 
 ## 🔧 高级配置
 

@@ -55,12 +55,12 @@ PROXY_CONFIG = {
 class DataPreparator:
     """数据下载和准备器 - 增强版网络处理"""
     
-    def __init__(self, data_root: str = "/root/sj-tmp/dataset/"):
+    def __init__(self, data_root: str = "/root/sj-tmp/-dataset/"):
         """
         初始化数据准备器
         
         Args:
-            data_root: 数据集存储根目录
+            data_root: 数据集存储根目录（默认使用云计算平台路径）
         """
         self.data_root = Path(data_root)
         self.config = Config(data_root=data_root)
@@ -79,6 +79,7 @@ class DataPreparator:
         print(f"数据根目录: {self.data_root}")
         print(f"配置数据集: {list(self.config.datasets.keys())}")
         print(f"当前HuggingFace镜像源: {self.hf_mirrors[self.current_mirror_index]}")
+        print(f"数据集将保存到: {self.data_root}")
     
     def setup_logging(self):
         """设置日志"""
@@ -751,7 +752,7 @@ class DataPreparator:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description="GRACE项目数据准备工具")
-    parser.add_argument("--data-root", type=str, default="/root/sj-tmp/dataset/",
+    parser.add_argument("--data-root", type=str, default="/root/sj-tmp/-dataset/",
                        help="数据存储根目录")
     parser.add_argument("--dataset", type=str, 
                        choices=["bigvul", "reveal", "devign"],
