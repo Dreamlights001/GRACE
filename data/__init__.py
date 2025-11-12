@@ -21,8 +21,9 @@ class DataProcessor:
     def __init__(self):
         self.datasets_dir = config.data_dir
         self.datasets_dir.mkdir(exist_ok=True)
+        self.current_data = []
     
-    def load_dataset(self, dataset_name: str, split: str = "test") -> List[Dict[str, Any]]:
+    def load_dataset(self, dataset_name: str, split: str = "test") -> bool:
         """
         加载数据集
         
@@ -31,37 +32,107 @@ class DataProcessor:
             split: 数据分割 (train, test)
         
         Returns:
-            处理后的数据列表
+            是否加载成功
         """
         try:
-            dataset_path = config.get_dataset_path(dataset_name, split)
+            processed_path = None
+            try:
+                processed_path = config.get_processed_dataset_path(dataset_name, split)
+            except Exception:
+                processed_path = None
+            
+            if processed_path and processed_path.exists():
+                dataset_path = processed_path
+            else:
+                dataset_path = config.get_dataset_path(dataset_name, split)
             
             if not dataset_path.exists():
                 logger.warning(f"数据集文件不存在: {dataset_path}")
                 logger.info(f"请手动下载数据集: {config.datasets[dataset_name].get('huggingface_url', '未知')}")
-                return []
+                self.current_data = []
+                return False
             
             logger.info(f"加载数据集: {dataset_path}")
             
-            data = []
+            raw = []
             with open(dataset_path, 'r', encoding='utf-8') as f:
-                # 尝试JSON Lines格式（每行一个JSON对象）
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
-                    if line:  # 跳过空行
-                        try:
-                            item = json.loads(line)
-                            data.append(item)
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"第{line_num}行JSON解析失败: {e}")
-                            continue
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                        raw.append(item)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"第{line_num}行JSON解析失败: {e}")
+                        continue
             
-            logger.info(f"成功加载 {len(data)} 个样本")
-            return data
+            logger.info(f"成功加载 {len(raw)} 个样本")
+            
+            def _coerce_label(x):
+                import numpy as np
+                import pandas as pd
+                if isinstance(x, (list, tuple, np.ndarray)):
+                    for v in x:
+                        if v is None:
+                            continue
+                        if isinstance(v, float) and pd.isna(v):
+                            continue
+                        x = v
+                        break
+                if isinstance(x, bool):
+                    return int(x)
+                if isinstance(x, (np.integer, int)):
+                    return int(x)
+                if isinstance(x, (np.floating, float)):
+                    try:
+                        return int(round(x))
+                    except Exception:
+                        return 0
+                if isinstance(x, str):
+                    s = x.strip().lower()
+                    if s in ('true', 'false'):
+                        return 1 if s == 'true' else 0
+                    try:
+                        return int(s)
+                    except Exception:
+                        try:
+                            return int(float(s))
+                        except Exception:
+                            return 0
+                if isinstance(x, dict):
+                    for k in ('label', 'target', 'value'):
+                        if k in x:
+                            return _coerce_label(x[k])
+                    return 0
+                return 0
+            
+            std = []
+            for it in raw:
+                if dataset_name == 'bigvul':
+                    code = it.get('code') or it.get('func_before') or ''
+                    label = it.get('label') if 'label' in it else it.get('vul')
+                elif dataset_name == 'reveal':
+                    code = it.get('code') or it.get('functionSource') or ''
+                    label = it.get('label')
+                elif dataset_name == 'devign':
+                    code = it.get('code') or it.get('func') or ''
+                    label = it.get('label') if 'label' in it else it.get('target')
+                else:
+                    code = it.get('code') or ''
+                    label = it.get('label')
+                std.append({
+                    'code': str(code),
+                    'label': _coerce_label(label)
+                })
+            
+            self.current_data = std
+            return len(self.current_data) > 0
             
         except Exception as e:
             logger.error(f"加载数据集失败: {e}")
-            return []
+            self.current_data = []
+            return False
     
     def process_raw_data(self, raw_data_path: str, 
                         output_path: str,
@@ -169,7 +240,7 @@ class DataProcessor:
         filtered_data = []
         
         for item in data:
-            code = item.get('func', '')
+            code = item.get('code', '')
             
             if min_length <= len(code) <= max_length:
                 filtered_data.append(item)
@@ -228,11 +299,7 @@ class DataProcessor:
         Returns:
             数据项列表
         """
-        # 这个方法需要返回当前加载的数据
-        # 由于DataProcessor没有存储当前数据的状态，我们需要返回空列表
-        # 或者实现一个机制来存储当前加载的数据
-        logger.warning("get_data_items() 方法未实现完整功能，返回空列表")
-        return []
+        return self.current_data
 
 class DatasetInfo:
     """数据集信息管理"""
