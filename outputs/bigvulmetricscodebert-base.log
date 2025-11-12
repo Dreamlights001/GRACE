@@ -1,0 +1,8 @@
+Dataset: bigvul (test)
+Model: microsoft/codebert-base
+Total Samples: 135816
+Accuracy: 0.8653
+Precision: 0.1088
+Recall: 0.1871
+F1-Score: 0.1376
+Timestamp: 2025-11-12T05:44:32.760561

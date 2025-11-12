@@ -1,0 +1,8 @@
+Dataset: devign (test)
+Model: microsoft/codebert-base
+Total Samples: 19668
+Accuracy: 0.8150
+Precision: 0.0000
+Recall: 0.0000
+F1-Score: 0.0000
+Timestamp: 2025-11-12T05:37:58.716394

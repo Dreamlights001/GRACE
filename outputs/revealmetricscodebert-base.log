@@ -1,0 +1,8 @@
+Dataset: reveal (test)
+Model: microsoft/codebert-base
+Total Samples: 16367
+Accuracy: 0.9007
+Precision: 0.2174
+Recall: 0.0031
+F1-Score: 0.0061
+Timestamp: 2025-11-12T05:37:35.004144
