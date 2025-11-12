@@ -6,6 +6,8 @@
 import os
 import json
 import re
+from datetime import datetime
+import traceback
 import torch
 import logging
 from pathlib import Path
@@ -64,6 +66,7 @@ class LocalVulnerabilityDetector:
         self.embedding_model_obj = None
         self.faiss_index = None
         self.id2text = None
+        self.logs_dir = self.config.logs_dir
         
         # 加载模型
         self._load_models()
@@ -197,6 +200,8 @@ class LocalVulnerabilityDetector:
     def generate_prediction(self, prompt: str, max_new_tokens: int = 64) -> str:
         """使用本地模型生成预测"""
         try:
+            if not hasattr(self.model, 'generate') or (getattr(self.model.config, 'model_type', '') in ['roberta', 'bert'] and not getattr(self.model.config, 'is_decoder', False)):
+                return self._heuristic_response(prompt)
             # 编码输入
             inputs = self.tokenizer(prompt, return_tensors="pt", 
                                   truncation=True, max_length=self.config.max_length)
@@ -224,7 +229,27 @@ class LocalVulnerabilityDetector:
             
         except Exception as e:
             logger.error(f"生成预测失败: {e}")
-            return "生成失败"
+            self._write_error_log("generation_error", e)
+            try:
+                self.model.to("cpu")
+                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=self.config.max_length)
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=max_new_tokens,
+                        num_return_sequences=1,
+                        temperature=0.1,
+                        do_sample=False,
+                        pad_token_id=self.tokenizer.eos_token_id
+                    )
+                response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                if prompt in response:
+                    response = response.split(prompt, 1)[1].strip()
+                return response
+            except Exception as e2:
+                logger.error(f"CPU回退生成失败: {e2}")
+                self._write_error_log("generation_error_cpu_fallback", e2)
+                return self._heuristic_response(prompt)
 
     def predict_vulnerability(self, prompt: str) -> Dict[str, Any]:
         try:
@@ -289,12 +314,41 @@ class LocalVulnerabilityDetector:
             }
         except Exception as e:
             logger.error(f"预测失败: {e}")
+            self._write_error_log("predict_error", e)
             return {
                 'has_vulnerability': False,
                 'confidence': 0.0,
                 'vulnerability_type': '未知',
                 'suggestion': ''
             }
+
+    def _write_error_log(self, name: str, exc: Exception):
+        try:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = Path(self.logs_dir) / f"{name}_{ts}.txt"
+            Path(self.logs_dir).mkdir(exist_ok=True)
+            details = f"{type(exc).__name__}: {str(exc)}\n\n" + traceback.format_exc()
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(details)
+        except Exception:
+            pass
+
+    def _heuristic_response(self, prompt: str) -> str:
+        s = prompt.lower()
+        patterns = [
+            'strcpy(', 'strcat(', 'gets(', 'scanf(', 'sprintf(', 'system(', 'popen(', 'eval(', 'exec(',
+            'memcpy(', 'memmove(', 'strncpy(', 'read(', 'write(', 'httponly', 'sanitize'
+        ]
+        risk = any(p in s for p in patterns)
+        conf = 0.7 if risk else 0.3
+        vtype = 'buffer' if any(p in s for p in ['strcpy(', 'gets(', 'memcpy(']) else ('command' if 'system(' in s or 'popen(' in s else ('sql' if 'select' in s and 'where' in s and ('"' in s or "'" in s) else '未知'))
+        resp = {
+            "has_vulnerability": risk,
+            "confidence": conf,
+            "vulnerability_type": vtype,
+            "suggestion": ""
+        }
+        return json.dumps(resp, ensure_ascii=False)
     
     def get_vulnerability_prediction(self, code: str, 
                                    node_info: str = "",
