@@ -23,7 +23,7 @@ class Config:
             self.data_root = Path("/root/sj-tmp/dataset/")
         
         self.data_dir = self.data_root  # 数据集存储目录
-        self.models_dir = self.project_root / "models"
+        self.models_dir = Path("/root/sj-tmp/pre_train")  # 预训练模型存储目录
         self.output_dir = self.project_root / "outputs"
         self.logs_dir = self.project_root / "logs"
         self.figs_dir = self.project_root / "figs"
