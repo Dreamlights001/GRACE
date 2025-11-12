@@ -55,7 +55,7 @@ PROXY_CONFIG = {
 class DataPreparator:
     """数据下载和准备器 - 增强版网络处理"""
     
-    def __init__(self, data_root: str = "/root/sj-tmp/-dataset/"):
+    def __init__(self, data_root: str = "/root/sj-tmp/dataset/"):
         """
         初始化数据准备器
         
@@ -639,7 +639,6 @@ class DataPreparator:
     
     def _standardize_devign(self, df: pd.DataFrame) -> pd.DataFrame:
         """标准化Devign数据集格式"""
-        # 重命名列以保持一致性
         column_mapping = {
             'func': 'code',
             'target': 'label',
@@ -650,20 +649,53 @@ class DataPreparator:
             if old_col in df.columns:
                 df = df.rename(columns={old_col: new_col})
         
-        # 确保必要的列存在
         if 'label' in df.columns:
-            # Devign数据集的标签可能是列表格式，需要特殊处理
             try:
-                # 首先尝试直接转换为整数
                 df['label'] = df['label'].astype(int)
             except (ValueError, TypeError):
-                # 如果转换失败，可能是列表格式，取第一个元素
                 self.logger.warning("Devign标签列包含列表格式，进行特殊处理")
-                # 使用更安全的转换方法
-                df['label'] = df['label'].apply(lambda x: 
-                    int(x[0]) if isinstance(x, list) and len(x) > 0 else 
-                    int(x) if pd.notna(x) else 0
-                )
+                def _coerce_label(x):
+                    import numpy as np
+                    import pandas as pd
+                    if isinstance(x, (list, tuple, np.ndarray)):
+                        for v in x:
+                            if v is None:
+                                continue
+                            if isinstance(v, float) and pd.isna(v):
+                                continue
+                            x = v
+                            break
+                    if isinstance(x, bool):
+                        return int(x)
+                    if isinstance(x, (np.integer, int)):
+                        return int(x)
+                    if isinstance(x, (np.floating, float)):
+                        try:
+                            return int(round(x))
+                        except Exception:
+                            return None
+                    if isinstance(x, str):
+                        s = x.strip().lower()
+                        if s in ('true', 'false'):
+                            return 1 if s == 'true' else 0
+                        try:
+                            return int(s)
+                        except Exception:
+                            try:
+                                return int(float(s))
+                            except Exception:
+                                return None
+                    if isinstance(x, dict):
+                        for k in ('label', 'target', 'value'):
+                            if k in x:
+                                return _coerce_label(x[k])
+                        return None
+                    return None
+                labels = df['label'].apply(_coerce_label)
+                invalid = int(labels.isna().sum()) if hasattr(labels, 'isna') else 0
+                if invalid > 0:
+                    self.logger.info(f"Devign标签转换为空数量: {invalid}")
+                df['label'] = pd.to_numeric(labels, errors='coerce').fillna(0).astype(int)
         
         return df
     
