@@ -390,10 +390,14 @@ tail -f logs/grace_*.log
 如果您在研究中使用了GRACE，请引用原始论文：
 
 ```bibtex
-@inproceedings{grace2023,
-  title={GRACE: Empowering LLM-based Software Vulnerability Detection with Graph Structure and In-context Learning},
-  author={Your Authors},
-  year={2023}
+@article{lu2024grace,
+  title={GRACE: Empowering LLM-based software vulnerability detection with graph structure and in-context learning},
+  author={Lu, Guilong and Ju, Xiaolin and Chen, Xiang and Pei, Wenlong and Cai, Zhilong},
+  journal={Journal of Systems and Software},
+  volume={212},
+  pages={112031},
+  year={2024},
+  publisher={Elsevier}
 }
 ```
 
